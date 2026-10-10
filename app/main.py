@@ -1,4 +1,5 @@
 import os
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -22,6 +23,7 @@ from .auth import (
 from .db import Base, engine, get_db
 from .geo import sort_packages
 from .migrate import ensure_schema
+from .relay import make_router
 from .models import ConsentLog, Job, JobPackage, User, now, uid
 
 Base.metadata.create_all(bind=engine)
@@ -31,7 +33,23 @@ for _msg in ensure_schema():
 
 ROLES = ("courier", "employer", "sponsor")
 
-app = FastAPI(title="Rota Asistan", version="1.0.0")
+# ESKİ akış (Başvur → Kabul → Yola çık; adresler sunucuda). Yeni tanımda KAPALI: ilan + mesajlaşma.
+# Yalnız sunum/deneme için Render ortamına ESKI_AKIS=1 yazılırsa açılır.
+ESKI_AKIS = os.getenv("ESKI_AKIS", "") == "1"
+
+# Mesaj aktarıcısı sınırları (Render ortam değişkeniyle değiştirilebilir)
+RELAY_TTL_DAYS = float(os.getenv("RELAY_TTL_DAYS", "7"))  # ulaşmayan mesaj en geç bu kadar gün sonra silinir
+RELAY_MAX_BYTES = int(os.getenv("RELAY_MAX_BYTES", str(256 * 1024)))  # tek mesaj (adres listesi dahil)
+RELAY_USER_MAX_BYTES = int(os.getenv("RELAY_USER_MAX_BYTES", str(10 * 1024 * 1024)))  # bir kişiyi bekleyen toplam
+GROUP_MAX = int(os.getenv("GROUP_MAX", "7"))  # grup üst sınırı (gönderen dahil)
+
+@asynccontextmanager
+async def lifespan(_app):
+    relay_router.start_cleaner()  # ulaşmayan mesajları arka planda siler (Render ücretsizde zamanlanmış iş yok)
+    yield
+
+
+app = FastAPI(title="Rota Asistan", version="1.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -41,6 +59,28 @@ app.add_middleware(
 )
 
 PUBLIC_BASE = os.getenv("PUBLIC_BASE", "").rstrip("/")
+
+
+def drop_stored_addresses() -> int:
+    """Yeni akışta sunucuda adres arşivi tutulmaz. Eski akıştan kalan adres satırları (alıcı adı, telefon, adres)
+    açılışta silinir; ilanın adres SAYISI korunur. ESKI_AKIS=1 iken dokunulmaz."""
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        conn.execute(text(
+            "UPDATE jobs SET package_count = (SELECT COUNT(*) FROM job_packages p WHERE p.job_id = jobs.id) "
+            "WHERE (package_count IS NULL OR package_count = 0) AND EXISTS (SELECT 1 FROM job_packages p WHERE p.job_id = jobs.id)"
+        ))
+        return conn.execute(text("DELETE FROM job_packages")).rowcount or 0
+
+
+if not ESKI_AKIS:
+    _n = drop_stored_addresses()
+    if _n:
+        print(f"[şema] eski akıştan kalan {_n} adres satırı silindi (adresler artık yalnız telefonda)", flush=True)
+
+relay_router = make_router(RELAY_TTL_DAYS, RELAY_MAX_BYTES, RELAY_USER_MAX_BYTES, GROUP_MAX)
+app.include_router(relay_router)
 
 
 class RegisterIn(BaseModel):
@@ -96,7 +136,13 @@ class JobIn(BaseModel):
     note: str = ""
     lat: float
     lon: float
+    # Yeni akışta adresler GÖNDERİLMEZ: yalnız sayı + bölge. (Eski istemci packages gönderirse saklanmaz, yalnız sayılır.)
+    package_count: int = Field(default=0, ge=0, le=500, alias="packageCount")
+    area: str = Field(default="", max_length=160)
+    fee: float | None = Field(default=None, ge=0, le=1_000_000)
     packages: list[PkgIn] = Field(default_factory=list)
+
+    model_config = {"populate_by_name": True}
 
 
 class ConsentIn(BaseModel):
@@ -108,6 +154,9 @@ class ConsentIn(BaseModel):
     grup_konum: bool = Field(default=False, alias="grupKonum")
     aydinlatma_at: int = Field(default=0, ge=0, le=4102444800000, alias="aydinlatmaAt")
     acik_riza_at: int = Field(default=0, ge=0, le=4102444800000, alias="acikRizaAt")
+    # Kullanım koşulları onayı (eski istemci göndermez → 0)
+    sozlesme_version: int = Field(default=0, ge=0, le=1000, alias="sozlesmeV")
+    sozlesme_at: int = Field(default=0, ge=0, le=4102444800000, alias="sozlesmeAt")
 
     model_config = {"populate_by_name": True}
 
@@ -133,7 +182,7 @@ def user_out(u: User) -> dict:
 
 def consent_out(c: ConsentLog | None) -> dict:
     if c is None:  # hiç rıza kaydı yok
-        return {"version": 0, "voice": False, "ocr": False, "grupKonum": False, "aydinlatmaAt": 0, "acikRizaAt": 0, "recordedAt": None}
+        return {"version": 0, "voice": False, "ocr": False, "grupKonum": False, "aydinlatmaAt": 0, "acikRizaAt": 0, "sozlesmeV": 0, "sozlesmeAt": 0, "recordedAt": None}
     return {
         "version": c.version,
         "voice": bool(c.voice),
@@ -141,6 +190,8 @@ def consent_out(c: ConsentLog | None) -> dict:
         "grupKonum": bool(c.grup_konum),
         "aydinlatmaAt": c.aydinlatma_ms or 0,
         "acikRizaAt": c.acik_riza_ms or 0,
+        "sozlesmeV": c.sozlesme_version or 0,
+        "sozlesmeAt": c.sozlesme_ms or 0,
         "recordedAt": c.created_at.isoformat() if c.created_at else None,
     }
 
@@ -182,6 +233,11 @@ def job_out(j: Job, db: Session, include_packages=False) -> dict:
     applicant = db.get(User, j.applicant_id) if j.applicant_id else None
     courier = db.get(User, j.courier_id) if j.courier_id else None
     employer = db.get(User, j.employer_id)
+
+    # Telefon numaraları ilanda GÖSTERİLMEZ (giriş yapmış herkes ilanları görür). Taraflar mesajlaşarak paylaşır.
+    def person(u: User | None) -> dict | None:
+        return {"id": u.id, "name": u.name} if u else None
+
     return {
         "id": j.id,
         "title": j.title,
@@ -189,13 +245,20 @@ def job_out(j: Job, db: Session, include_packages=False) -> dict:
         "status": j.status,
         "employerLat": j.employer_lat,
         "employerLon": j.employer_lon,
-        "packageCount": len(j.packages),
+        "packageCount": j.package_count or len(j.packages),
+        "area": j.area or "",
+        "fee": j.fee,
         "createdAt": j.created_at.isoformat() if j.created_at else None,
-        "employer": {"id": employer.id, "name": employer.name, "phone": employer.phone} if employer else None,
-        "applicant": {"id": applicant.id, "name": applicant.name, "phone": applicant.phone} if applicant else None,
-        "courier": {"id": courier.id, "name": courier.name, "phone": courier.phone} if courier else None,
+        "employer": person(employer),
+        "applicant": person(applicant),
+        "courier": person(courier),
         "packages": [pkg_out(p, base) for p in pkgs] if include_packages else None,
     }
+
+
+def old_flow_only():
+    if not ESKI_AKIS:
+        raise HTTPException(410, "Bu akış kapatıldı: ilan sahibine mesaj gönderin")
 
 
 @app.get("/")
@@ -315,6 +378,7 @@ def save_consent(body: ConsentIn, user: User = Depends(current_user), db: Sessio
         and bool(last.ocr) == body.ocr
         and bool(last.grup_konum) == body.grup_konum
         and (last.acik_riza_ms or 0) == body.acik_riza_at
+        and (last.sozlesme_version or 0) == body.sozlesme_version
     )
     if same:
         return consent_out(last)
@@ -326,6 +390,8 @@ def save_consent(body: ConsentIn, user: User = Depends(current_user), db: Sessio
         grup_konum=body.grup_konum,
         aydinlatma_ms=body.aydinlatma_at,
         acik_riza_ms=body.acik_riza_at,
+        sozlesme_version=body.sozlesme_version,
+        sozlesme_ms=body.sozlesme_at,
     )
     db.add(row)
     db.commit()
@@ -349,10 +415,12 @@ def consent_history(user: User = Depends(current_user), db: Session = Depends(ge
 def create_job(body: JobIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
     if user.active_role == "sponsor":
         raise HTTPException(403, "Sponsor hesabı ilan veremez")
-    if not body.packages:
-        raise HTTPException(400, "İlanda en az bir paket olmalı")
+    count = body.package_count or len(body.packages)
+    if count < 1:
+        raise HTTPException(400, "İlanda en az bir adres olmalı")
     rows = []
-    for p in body.packages:
+    # Yeni akışta adresler (alıcı adı, telefon, adres) sunucuya YAZILMAZ; işletmenin telefonunda kalır.
+    for p in body.packages if ESKI_AKIS else []:
         phone = norm_phone(p.phone)
         if not p.customer.strip():
             raise HTTPException(400, "Her pakette müşteri adı zorunlu")
@@ -379,6 +447,9 @@ def create_job(body: JobIn, user: User = Depends(current_user), db: Session = De
         employer_lat=body.lat,
         employer_lon=body.lon,
         status="open",
+        package_count=count,
+        area=(body.area or "").strip(),
+        fee=body.fee,
         packages=rows,
     )
     user.active_role = "employer"
@@ -387,14 +458,29 @@ def create_job(body: JobIn, user: User = Depends(current_user), db: Session = De
     db.add(job)
     db.commit()
     db.refresh(job)
-    return job_out(job, db, include_packages=True)
+    return job_out(job, db, include_packages=ESKI_AKIS)
+
+
+@app.delete("/v1/jobs/{job_id}")
+def close_job(job_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """İşletme ilanını yayından kaldırır. Varsa (eski akıştan kalma) adres satırları da silinir."""
+    job = db.get(Job, job_id)
+    if not job:
+        raise HTTPException(404, "İlan yok")
+    if job.employer_id != user.id:
+        raise HTTPException(403, "Yalnız ilanı veren kaldırabilir")
+    job.status = "closed"
+    for p in list(job.packages):
+        db.delete(p)
+    db.commit()
+    return {"ok": True}
 
 
 @app.get("/v1/jobs/open")
 def open_jobs(user: User = Depends(current_user), db: Session = Depends(get_db)):
     rows = (
         db.query(Job)
-        .filter(Job.status.in_(["open", "applied"]))
+        .filter(Job.status.in_(["open", "applied"] if ESKI_AKIS else ["open"]))
         .order_by(Job.created_at.desc())
         .limit(80)
         .all()
@@ -405,7 +491,7 @@ def open_jobs(user: User = Depends(current_user), db: Session = Depends(get_db))
 @app.get("/v1/jobs/mine")
 def my_jobs(user: User = Depends(current_user), db: Session = Depends(get_db)):
     if user.active_role == "employer":
-        rows = db.query(Job).filter(Job.employer_id == user.id).order_by(Job.created_at.desc()).all()
+        rows = db.query(Job).filter(Job.employer_id == user.id, Job.status != "closed").order_by(Job.created_at.desc()).all()
     else:
         rows = (
             db.query(Job)
@@ -434,6 +520,7 @@ def get_job(job_id: str, user: User = Depends(current_user), db: Session = Depen
 
 @app.post("/v1/jobs/{job_id}/apply")
 def apply_job(job_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    old_flow_only()
     if user.active_role == "sponsor":
         raise HTTPException(403, "Sponsor hesabı ilana başvuramaz")
     job = db.get(Job, job_id)
@@ -450,6 +537,7 @@ def apply_job(job_id: str, user: User = Depends(current_user), db: Session = Dep
 
 @app.post("/v1/jobs/{job_id}/accept")
 def accept_job(job_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    old_flow_only()
     job = db.get(Job, job_id)
     if not job:
         raise HTTPException(404, "İlan yok")
@@ -468,6 +556,7 @@ def accept_job(job_id: str, user: User = Depends(current_user), db: Session = De
 @app.post("/v1/jobs/{job_id}/depart")
 def depart_job(job_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
     """Kurye yola çıktı — SMS bir sonraki adım; şimdilik pin linkleri döner."""
+    old_flow_only()
     job = db.get(Job, job_id)
     if not job:
         raise HTTPException(404, "İlan yok")

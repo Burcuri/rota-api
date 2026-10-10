@@ -124,11 +124,13 @@ def test_sponsor_cannot_post_jobs_or_apply():
     sp = reg(role="sponsor").json()["token"]
     r = client.post("/v1/jobs", headers=auth(sp), json={"lat": 1, "lon": 1, "packages": [{"customer": "A", "phone": phone(), "address": "x", "lat": 1, "lon": 1}]})
     assert r.status_code == 403
-    assert client.post(f"/v1/jobs/{job.json()['id']}/apply", headers=auth(sp)).status_code == 403
     assert client.get("/v1/me", headers=auth(sp)).json()["active_role"] == "sponsor"  # rol sessizce değişmedi
-    # kurye hâlâ başvurabilir
+    # Başvur / kabul / yola çık akışı kapalı (ESKI_AKIS yok): herkese 410
     c = reg(role="courier").json()["token"]
-    assert client.post(f"/v1/jobs/{job.json()['id']}/apply", headers=auth(c)).status_code == 200
+    jid = job.json()["id"]
+    assert client.post(f"/v1/jobs/{jid}/apply", headers=auth(c)).status_code == 410
+    assert client.post(f"/v1/jobs/{jid}/accept", headers=auth(emp)).status_code == 410
+    assert client.post(f"/v1/jobs/{jid}/depart", headers=auth(emp)).status_code == 410
 
 
 # ---------- profil ----------

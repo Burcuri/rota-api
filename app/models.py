@@ -44,6 +44,10 @@ class Job(Base):
     employer_lon = Column(Float, nullable=False)
     # open -> applied -> accepted -> departed -> done | cancelled
     status = Column(String(20), nullable=False, default="open", index=True)
+    # Yeni akışta adresler sunucuya YAZILMAZ (işletmenin telefonunda kalır, mesajla gönderilir): ilanda yalnız sayı ve bölge
+    package_count = Column(Integer, default=0)
+    area = Column(String(160), default="")
+    fee = Column(Float)  # işletmenin yazdığı teslimat ücreti (₺) — bilgi amaçlı; Rota ödeme almaz/aktarmaz
     applicant_id = Column(String(32), ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), default=now)
     accepted_at = Column(DateTime(timezone=True))
@@ -91,3 +95,42 @@ class ConsentLog(Base):
     aydinlatma_ms = Column(BigInteger, default=0)  # istemci saati (bilgi amaçlı, epoch ms)
     acik_riza_ms = Column(BigInteger, default=0)  # istemci saati (bilgi amaçlı, epoch ms)
     created_at = Column(DateTime(timezone=True), default=now, index=True)  # SUNUCU saati: hukuken geçerli zaman
+    # Kullanım koşulları (sözleşme) onayı: hangi sürüm, istemci saati. 0 = henüz onaylanmadı / eski istemci
+    sozlesme_version = Column(Integer, default=0)
+    sozlesme_ms = Column(BigInteger, default=0)
+
+
+class Device(Base):
+    """Bir hesabın cihazları (telefon, web ikizi). Kimliği istemci üretir ve saklar. Mesaj aktarıcısı her mesajı
+    alıcının (ve gönderenin öbür cihazlarının) her cihazına bir kez ulaştırır."""
+
+    __tablename__ = "devices"
+    id = Column(String(64), primary_key=True)
+    user_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    platform = Column(String(16), default="")  # android | ios | web
+    created_at = Column(DateTime(timezone=True), default=now)
+    last_seen = Column(DateTime(timezone=True), default=now, index=True)
+
+
+class RelayMsg(Base):
+    """Geçici mesaj aktarıcısı: mesaj içeriği (adres listesi dahil) yalnız ulaştırılana kadar burada durur.
+    Tüm hedef cihazlara ulaşınca silinir; ulaşamayan en geç RELAY_TTL_DAYS (varsayılan 7) gün sonra silinir."""
+
+    __tablename__ = "relay_msgs"
+    id = Column(String(32), primary_key=True, default=uid)
+    sender_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    body = Column(Text, nullable=False)  # istemcinin JSON zarfı; sunucu içine bakmaz
+    size = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), default=now)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class RelayDelivery(Base):
+    """Bir mesajın bir cihaza (ya da henüz cihazı olmayan kullanıcıya: device_id NULL) ulaştırılma kaydı.
+    Cihaz aldığını bildirince satır silinir; mesajın satırı kalmayınca mesaj da silinir."""
+
+    __tablename__ = "relay_delivery"
+    id = Column(String(32), primary_key=True, default=uid)
+    msg_id = Column(String(32), ForeignKey("relay_msgs.id"), nullable=False, index=True)
+    user_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    device_id = Column(String(64), index=True)  # NULL: kullanıcının ilk açılan cihazı alır

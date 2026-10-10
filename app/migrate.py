@@ -12,6 +12,11 @@ from .db import engine
 ADD_COLUMNS = [
     ("users", "username", "VARCHAR(32)"),
     ("users", "email", "VARCHAR(254)"),
+    ("jobs", "package_count", "INTEGER"),
+    ("jobs", "area", "VARCHAR(160)"),
+    ("jobs", "fee", "FLOAT"),
+    ("consent_log", "sozlesme_version", "INTEGER"),
+    ("consent_log", "sozlesme_ms", "BIGINT"),
 ]
 
 # create_all'un yeni kurulumda açtığı dizin adlarıyla aynı adlar (ix_<tablo>_<sütun>)
@@ -36,9 +41,10 @@ def ensure_schema() -> list[str]:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
         except Exception:
             # İki süreç aynı anda açılırsa diğeri sütunu bizden önce eklemiş olabilir: artık varsa sorun yok, yoksa gerçek hata
-            if col not in {c["name"] for c in inspect(engine).get_columns(table)}:
-                raise
-            continue
+            fresh = inspect(engine)
+            if not fresh.has_table(table) or col in {c["name"] for c in fresh.get_columns(table)}:
+                continue
+            raise
         done.append(f"{table}.{col} eklendi")
     with engine.begin() as conn:
         for ddl in INDEXES:
