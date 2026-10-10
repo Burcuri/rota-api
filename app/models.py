@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from .db import Base
@@ -92,6 +92,8 @@ class ConsentLog(Base):
     voice = Column(Boolean, nullable=False, default=False)  # sesle yazma (ses yurt dışı servise gider)
     ocr = Column(Boolean, nullable=False, default=False)  # adres okuma (görüntü OCR servisine gider)
     grup_konum = Column(Boolean, nullable=False, default=False)  # konumumu grup arkadaşlarım görsün
+    # Ortak kapı noktası katmanına katkı (teslim ettiğim kapının sokak/no/konumu tüm kullanıcılara görünür). Eski satırlarda NULL = kapalı
+    kapi = Column(Boolean, default=False)
     aydinlatma_ms = Column(BigInteger, default=0)  # istemci saati (bilgi amaçlı, epoch ms)
     acik_riza_ms = Column(BigInteger, default=0)  # istemci saati (bilgi amaçlı, epoch ms)
     created_at = Column(DateTime(timezone=True), default=now, index=True)  # SUNUCU saati: hukuken geçerli zaman
@@ -134,3 +136,57 @@ class RelayDelivery(Base):
     msg_id = Column(String(32), ForeignKey("relay_msgs.id"), nullable=False, index=True)
     user_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
     device_id = Column(String(64), index=True)  # NULL: kullanıcının ilk açılan cihazı alır
+
+
+class DoorPoint(Base):
+    """Ortak kapı noktası katmanı: OpenStreetMap'te olmayan kapı numaralarını kuryelerin teslimatlarıyla tamamlar.
+    Burada KİŞİ BİLGİSİ YOKTUR: yalnız il/ilçe/mahalle/sokak/kapı no + koordinat + güven puanı. Kim bildirdi bilgisi
+    ayrı tabloda (door_reports) ve yalnız geri çevrilemez kısa bir koddur; bu tablodan okunamaz.
+    Aynı anahtar (ilçe+mahalle+sokak+kapı) için birbirinden uzak birden çok aday satır olabilir; en yüksek puanlı gösterilir."""
+
+    __tablename__ = "door_points"
+    id = Column(String(32), primary_key=True, default=uid)
+    # Eşleştirme anahtarları (küçük harf, Türkçe karakter düz Latin, ek sözcükler atılmış)
+    province_k = Column(String(60), nullable=False, default="")
+    district_k = Column(String(80), nullable=False, default="")
+    neigh_k = Column(String(100), nullable=False, default="")
+    street_k = Column(String(120), nullable=False, default="")
+    street_kind = Column(String(10), nullable=False, default="")  # cadde | sokak | bulvar | meydan | ""
+    door_k = Column(String(8), nullable=False)  # ör. 12 ya da 12A (daire/kat atılmış)
+    door_n = Column(Integer, nullable=False)  # sayısal kısım
+    # Görünen adlar (ilk bildirimden)
+    province = Column(String(60), default="")
+    district = Column(String(80), default="")
+    neighborhood = Column(String(100), default="")
+    street = Column(String(120), default="")
+    lat = Column(Float, nullable=False)
+    lon = Column(Float, nullable=False)
+    score = Column(Float, nullable=False, default=0)  # onaylayan oyların ağırlık toplamı
+    wrong = Column(Float, nullable=False, default=0)  # "yanlış" oylarının ağırlık toplamı
+    confirms = Column(Integer, nullable=False, default=0)  # onaylayan farklı kişi sayısı
+    hidden = Column(Boolean, nullable=False, default=False)  # yanlış oyları doğrulardan çoksa gösterilmez
+    created_at = Column(DateTime(timezone=True), default=now)
+    updated_at = Column(DateTime(timezone=True), default=now, index=True)
+
+    __table_args__ = (
+        Index("ix_door_points_door", "district_k", "neigh_k", "door_k"),
+        Index("ix_door_points_street", "district_k", "neigh_k", "street_k"),
+    )
+
+
+class DoorReport(Base):
+    """Bir kişinin bir kapı noktası için tek oyu (onay ya da yanlış). Kişi KENDİ KİMLİĞİYLE tutulmaz: reporter, hesap
+    kimliğinden türetilmiş geri çevrilemez kısa koddur; yalnız aynı kişinin aynı noktayı birden çok kez saymasını önler."""
+
+    __tablename__ = "door_reports"
+    id = Column(String(32), primary_key=True, default=uid)
+    point_id = Column(String(32), ForeignKey("door_points.id"), nullable=False, index=True)
+    reporter = Column(String(32), nullable=False, index=True)
+    vote = Column(String(8), nullable=False, default="confirm")  # confirm | wrong
+    source = Column(String(12), nullable=False, default="checkin")  # checkin | pin | recipient
+    weight = Column(Float, nullable=False, default=1.0)
+    lat = Column(Float, nullable=False)
+    lon = Column(Float, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=now, index=True)
+
+    __table_args__ = (UniqueConstraint("point_id", "reporter", name="uq_door_report_point_reporter"),)

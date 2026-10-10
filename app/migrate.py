@@ -17,6 +17,7 @@ ADD_COLUMNS = [
     ("jobs", "fee", "FLOAT"),
     ("consent_log", "sozlesme_version", "INTEGER"),
     ("consent_log", "sozlesme_ms", "BIGINT"),
+    ("consent_log", "kapi", "BOOLEAN"),
 ]
 
 # create_all'un yeni kurulumda açtığı dizin adlarıyla aynı adlar (ix_<tablo>_<sütun>)

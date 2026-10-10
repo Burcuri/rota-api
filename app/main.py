@@ -22,6 +22,7 @@ from .auth import (
 )
 from .db import Base, engine, get_db
 from .geo import sort_packages
+from .doors import make_router as make_doors_router
 from .migrate import ensure_schema
 from .relay import make_router
 from .models import ConsentLog, Job, JobPackage, User, now, uid
@@ -43,13 +44,19 @@ RELAY_MAX_BYTES = int(os.getenv("RELAY_MAX_BYTES", str(256 * 1024)))  # tek mesa
 RELAY_USER_MAX_BYTES = int(os.getenv("RELAY_USER_MAX_BYTES", str(10 * 1024 * 1024)))  # bir kişiyi bekleyen toplam
 GROUP_MAX = int(os.getenv("GROUP_MAX", "7"))  # grup üst sınırı (gönderen dahil)
 
+# Ortak kapı noktası katmanı (Render ortam değişkeniyle değiştirilebilir)
+DOOR_DAILY_MAX = int(os.getenv("DOOR_DAILY_MAX", "400"))  # kişi başı 24 saatte en çok yeni oy
+DOOR_TRUST_SCORE = float(os.getenv("DOOR_TRUST_SCORE", "2"))  # "doğrulanmış" sayılmak için gereken puan (her kişi 1, alıcı 2)
+DOOR_MERGE_M = float(os.getenv("DOOR_MERGE_M", "35"))  # bu mesafe içindeki raporlar aynı nokta sayılır
+DOOR_REQUIRE_CONSENT = os.getenv("DOOR_REQUIRE_CONSENT", "1") != "0"  # katkı için açık rıza şartı (kapatmak önerilmez)
+
 @asynccontextmanager
 async def lifespan(_app):
     relay_router.start_cleaner()  # ulaşmayan mesajları arka planda siler (Render ücretsizde zamanlanmış iş yok)
     yield
 
 
-app = FastAPI(title="Rota Asistan", version="1.1.0", lifespan=lifespan)
+app = FastAPI(title="Rota Asistan", version="1.2.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -81,6 +88,8 @@ if not ESKI_AKIS:
 
 relay_router = make_router(RELAY_TTL_DAYS, RELAY_MAX_BYTES, RELAY_USER_MAX_BYTES, GROUP_MAX)
 app.include_router(relay_router)
+doors_router = make_doors_router(DOOR_DAILY_MAX, DOOR_REQUIRE_CONSENT, DOOR_TRUST_SCORE, DOOR_MERGE_M)
+app.include_router(doors_router)
 
 
 class RegisterIn(BaseModel):
@@ -152,6 +161,7 @@ class ConsentIn(BaseModel):
     voice: bool = False
     ocr: bool = False
     grup_konum: bool = Field(default=False, alias="grupKonum")
+    kapi: bool = False  # ortak kapı noktası katmanına katkı
     aydinlatma_at: int = Field(default=0, ge=0, le=4102444800000, alias="aydinlatmaAt")
     acik_riza_at: int = Field(default=0, ge=0, le=4102444800000, alias="acikRizaAt")
     # Kullanım koşulları onayı (eski istemci göndermez → 0)
@@ -182,12 +192,13 @@ def user_out(u: User) -> dict:
 
 def consent_out(c: ConsentLog | None) -> dict:
     if c is None:  # hiç rıza kaydı yok
-        return {"version": 0, "voice": False, "ocr": False, "grupKonum": False, "aydinlatmaAt": 0, "acikRizaAt": 0, "sozlesmeV": 0, "sozlesmeAt": 0, "recordedAt": None}
+        return {"version": 0, "voice": False, "ocr": False, "grupKonum": False, "kapi": False, "aydinlatmaAt": 0, "acikRizaAt": 0, "sozlesmeV": 0, "sozlesmeAt": 0, "recordedAt": None}
     return {
         "version": c.version,
         "voice": bool(c.voice),
         "ocr": bool(c.ocr),
         "grupKonum": bool(c.grup_konum),
+        "kapi": bool(c.kapi),
         "aydinlatmaAt": c.aydinlatma_ms or 0,
         "acikRizaAt": c.acik_riza_ms or 0,
         "sozlesmeV": c.sozlesme_version or 0,
@@ -377,6 +388,7 @@ def save_consent(body: ConsentIn, user: User = Depends(current_user), db: Sessio
         and bool(last.voice) == body.voice
         and bool(last.ocr) == body.ocr
         and bool(last.grup_konum) == body.grup_konum
+        and bool(last.kapi) == body.kapi
         and (last.acik_riza_ms or 0) == body.acik_riza_at
         and (last.sozlesme_version or 0) == body.sozlesme_version
     )
@@ -388,6 +400,7 @@ def save_consent(body: ConsentIn, user: User = Depends(current_user), db: Sessio
         voice=body.voice,
         ocr=body.ocr,
         grup_konum=body.grup_konum,
+        kapi=body.kapi,
         aydinlatma_ms=body.aydinlatma_at,
         acik_riza_ms=body.acik_riza_at,
         sozlesme_version=body.sozlesme_version,
