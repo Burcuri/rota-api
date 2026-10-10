@@ -5,14 +5,31 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .auth import check_pw, current_user, hash_pw, make_token, norm_phone
+from .auth import (
+    DUMMY_HASH,
+    check_pw,
+    current_user,
+    hash_pw,
+    is_phone_like,
+    make_token,
+    norm_email,
+    norm_phone,
+    norm_username,
+)
 from .db import Base, engine, get_db
 from .geo import sort_packages
-from .models import Job, JobPackage, User, now, uid
+from .migrate import ensure_schema
+from .models import ConsentLog, Job, JobPackage, User, now, uid
 
 Base.metadata.create_all(bind=engine)
+# create_all var olan tabloya sütun eklemez: eski veritabanına yeni sütunlar burada eklenir
+for _msg in ensure_schema():
+    print("[şema]", _msg, flush=True)
+
+ROLES = ("courier", "employer", "sponsor")
 
 app = FastAPI(title="Rota Asistan", version="1.0.0")
 app.add_middleware(
@@ -30,15 +47,29 @@ class RegisterIn(BaseModel):
     phone: str
     password: str
     name: str = ""
+    username: str | None = None  # isteğe bağlı; telefon yerine girişte kullanılır
+    email: str | None = None  # isteğe bağlı; henüz doğrulanmıyor
+    role: str = "courier"  # courier | employer | sponsor (eski istemciler göndermez → kurye)
 
 
 class LoginIn(BaseModel):
-    phone: str
+    # Üçünden biri yeterli: `phone` ya da `username` ya da ikisini de karşılayan `login`.
+    login: str | None = None
+    phone: str | None = None
+    username: str | None = None
     password: str
 
 
 class RoleIn(BaseModel):
     role: str
+
+
+class ProfileIn(BaseModel):
+    """Gönderilmeyen alana dokunulmaz. Boş metin ("") kullanıcı adını / e-postayı kaldırır."""
+
+    name: str | None = None
+    username: str | None = None
+    email: str | None = None
 
 
 class LocIn(BaseModel):
@@ -68,6 +99,19 @@ class JobIn(BaseModel):
     packages: list[PkgIn] = Field(default_factory=list)
 
 
+class ConsentIn(BaseModel):
+    """Açık rıza ekranındaki seçimler. Zamanı sunucu kendi saatiyle yazar; istemci saati yalnız bilgi içindir."""
+
+    version: int = Field(ge=0, le=1000)
+    voice: bool = False
+    ocr: bool = False
+    grup_konum: bool = Field(default=False, alias="grupKonum")
+    aydinlatma_at: int = Field(default=0, ge=0, le=4102444800000, alias="aydinlatmaAt")
+    acik_riza_at: int = Field(default=0, ge=0, le=4102444800000, alias="acikRizaAt")
+
+    model_config = {"populate_by_name": True}
+
+
 class PinIn(BaseModel):
     phone: str
     lat: float
@@ -79,10 +123,30 @@ def user_out(u: User) -> dict:
         "id": u.id,
         "phone": u.phone,
         "name": u.name,
+        "username": u.username,
+        "email": u.email,
         "active_role": u.active_role,
         "lat": u.lat,
         "lon": u.lon,
     }
+
+
+def consent_out(c: ConsentLog | None) -> dict:
+    if c is None:  # hiç rıza kaydı yok
+        return {"version": 0, "voice": False, "ocr": False, "grupKonum": False, "aydinlatmaAt": 0, "acikRizaAt": 0, "recordedAt": None}
+    return {
+        "version": c.version,
+        "voice": bool(c.voice),
+        "ocr": bool(c.ocr),
+        "grupKonum": bool(c.grup_konum),
+        "aydinlatmaAt": c.aydinlatma_ms or 0,
+        "acikRizaAt": c.acik_riza_ms or 0,
+        "recordedAt": c.created_at.isoformat() if c.created_at else None,
+    }
+
+
+def latest_consent(db: Session, user_id: str) -> ConsentLog | None:
+    return db.query(ConsentLog).filter(ConsentLog.user_id == user_id).order_by(ConsentLog.created_at.desc()).first()
 
 
 def pkg_out(p: JobPackage, base: str = "") -> dict:
@@ -144,26 +208,51 @@ def register(body: RegisterIn, db: Session = Depends(get_db)):
     phone = norm_phone(body.phone)
     if len(body.password or "") < 6:
         raise HTTPException(400, "Şifre en az 6 karakter")
+    if len(body.password) > 128:
+        raise HTTPException(400, "Şifre en fazla 128 karakter")
+    name = (body.name or "").strip()
+    if len(name) > 120:
+        raise HTTPException(400, "Ad en fazla 120 karakter")
+    role = (body.role or "courier").strip().lower()
+    if role not in ROLES:
+        raise HTTPException(400, "Hesap türü kurye, işveren veya sponsor olmalı")
+    username = norm_username(body.username or "")
+    email = norm_email(body.email or "")
     if db.query(User).filter(User.phone == phone).first():
         raise HTTPException(400, "Bu telefon zaten kayıtlı — giriş yap")
+    if username and db.query(User).filter(User.username == username).first():
+        raise HTTPException(400, "Bu kullanıcı adı alınmış, başka bir ad seç")
     u = User(
         phone=phone,
         password_hash=hash_pw(body.password),
-        name=(body.name or "").strip() or phone,
-        active_role="courier",
+        name=name or phone,
+        active_role=role,
+        username=username or None,
+        email=email or None,
     )
     db.add(u)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:  # aynı anda başka biri aynı telefonu / kullanıcı adını aldı
+        db.rollback()
+        raise HTTPException(400, "Bu telefon ya da kullanıcı adı zaten kayıtlı")
     db.refresh(u)
     return {"token": make_token(u.id), "user": user_out(u)}
 
 
 @app.post("/v1/auth/login")
 def login(body: LoginIn, db: Session = Depends(get_db)):
-    phone = norm_phone(body.phone)
-    u = db.query(User).filter(User.phone == phone).first()
-    if not u or not check_pw(body.password, u.password_hash):
-        raise HTTPException(401, "Telefon veya şifre yanlış")
+    ident = (body.login or body.phone or body.username or "").strip()
+    if not ident:
+        raise HTTPException(400, "Telefon veya kullanıcı adını yaz")
+    if is_phone_like(ident):
+        u = db.query(User).filter(User.phone == norm_phone(ident)).first()
+    else:
+        u = db.query(User).filter(User.username == ident.lower()).first()
+    # Hesap bulunamasa da şifre denetimi yapılır: yanıt süresi "bu hesap var mı" sorusunu ele vermesin
+    ok = check_pw(body.password or "", u.password_hash if u else DUMMY_HASH)
+    if not u or not ok:
+        raise HTTPException(401, "Telefon / kullanıcı adı veya şifre yanlış")
     return {"token": make_token(u.id), "user": user_out(u)}
 
 
@@ -174,10 +263,36 @@ def me(user: User = Depends(current_user)):
 
 @app.post("/v1/me/role")
 def set_role(body: RoleIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    if body.role not in ("courier", "employer"):
-        raise HTTPException(400, "Rol kurye veya işveren olmalı")
+    if body.role not in ROLES:
+        raise HTTPException(400, "Rol kurye, işveren veya sponsor olmalı")
     user.active_role = body.role
     db.commit()
+    return user_out(user)
+
+
+@app.post("/v1/me/profile")
+def update_profile(body: ProfileIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Ad, kullanıcı adı, e-posta güncelle. Telefon burada DEĞİŞMEZ (doğrulama olmadan değiştirilmesi hesabı kaçırmaya açıktır)."""
+    if body.name is not None:
+        name = body.name.strip()
+        if not name:
+            raise HTTPException(400, "Ad boş olamaz")
+        if len(name) > 120:
+            raise HTTPException(400, "Ad en fazla 120 karakter")
+        user.name = name
+    if body.username is not None:
+        username = norm_username(body.username)
+        if username and db.query(User).filter(User.username == username, User.id != user.id).first():
+            raise HTTPException(400, "Bu kullanıcı adı alınmış, başka bir ad seç")
+        user.username = username or None
+    if body.email is not None:
+        user.email = norm_email(body.email) or None
+    try:
+        db.commit()
+    except IntegrityError:  # aynı anda başka biri aynı kullanıcı adını aldı
+        db.rollback()
+        raise HTTPException(400, "Bu kullanıcı adı alınmış, başka bir ad seç")
+    db.refresh(user)
     return user_out(user)
 
 
@@ -189,8 +304,51 @@ def set_loc(body: LocIn, user: User = Depends(current_user), db: Session = Depen
     return user_out(user)
 
 
+@app.post("/v1/me/consent")
+def save_consent(body: ConsentIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Rıza ver / değiştir / geri çek. Her çağrı yeni satır ekler (geçmiş silinmez); aynı içerik tekrar gelirse eklenmez."""
+    last = latest_consent(db, user.id)
+    same = (
+        last is not None
+        and last.version == body.version
+        and bool(last.voice) == body.voice
+        and bool(last.ocr) == body.ocr
+        and bool(last.grup_konum) == body.grup_konum
+        and (last.acik_riza_ms or 0) == body.acik_riza_at
+    )
+    if same:
+        return consent_out(last)
+    row = ConsentLog(
+        user_id=user.id,
+        version=body.version,
+        voice=body.voice,
+        ocr=body.ocr,
+        grup_konum=body.grup_konum,
+        aydinlatma_ms=body.aydinlatma_at,
+        acik_riza_ms=body.acik_riza_at,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return consent_out(row)
+
+
+@app.get("/v1/me/consent")
+def get_consent(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    return consent_out(latest_consent(db, user.id))
+
+
+@app.get("/v1/me/consent/history")
+def consent_history(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Kullanıcının kendi rıza geçmişi (en yeni başta). KVKK: verilerime erişim hakkı."""
+    rows = db.query(ConsentLog).filter(ConsentLog.user_id == user.id).order_by(ConsentLog.created_at.desc()).limit(100).all()
+    return [consent_out(r) for r in rows]
+
+
 @app.post("/v1/jobs")
 def create_job(body: JobIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    if user.active_role == "sponsor":
+        raise HTTPException(403, "Sponsor hesabı ilan veremez")
     if not body.packages:
         raise HTTPException(400, "İlanda en az bir paket olmalı")
     rows = []
@@ -276,6 +434,8 @@ def get_job(job_id: str, user: User = Depends(current_user), db: Session = Depen
 
 @app.post("/v1/jobs/{job_id}/apply")
 def apply_job(job_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    if user.active_role == "sponsor":
+        raise HTTPException(403, "Sponsor hesabı ilana başvuramaz")
     job = db.get(Job, job_id)
     if not job:
         raise HTTPException(404, "İlan yok")

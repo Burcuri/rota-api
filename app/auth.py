@@ -12,8 +12,21 @@ from sqlalchemy.orm import Session
 from .db import get_db
 from .models import User
 
-SECRET = os.getenv("SECRET_KEY", "rota-dev-secret-change-me")
 ALGO = "HS256"
+
+# Oturum anahtarı. Bu repo herkese açık olduğu için koddaki yedek değer GİZLİ DEĞİLDİR: onunla imzalanmış oturumu herkes
+# üretebilir. Bu yüzden gerçek (PostgreSQL) veritabanıyla çalışırken SECRET_KEY zorunlu; yalnız yerel geliştirmede
+# (SQLite) yedek değer kullanılır.
+SECRET = os.getenv("SECRET_KEY", "").strip()
+if not SECRET:
+    if (os.getenv("DATABASE_URL") or "").startswith("postgres"):
+        raise RuntimeError(
+            "SECRET_KEY ortam değişkeni tanımlı değil. Render > servis > Environment bölümüne uzun, rastgele bir "
+            "SECRET_KEY ekle (en az 32 karakter), sonra yeniden dağıt."
+        )
+    SECRET = "rota-dev-secret-change-me"
+elif len(SECRET) < 16:
+    raise RuntimeError("SECRET_KEY çok kısa: en az 16, tercihen 32+ rastgele karakter olmalı.")
 
 
 def norm_phone(raw: str) -> str:
@@ -29,6 +42,43 @@ def norm_phone(raw: str) -> str:
     return s
 
 
+USERNAME_RE = re.compile(r"^(?=.*[a-z])[a-z0-9_.]{3,20}$")
+# Taklit edilebilecek ya da ileride sistem için ayrılacak adlar
+RESERVED_USERNAMES = {
+    "admin", "administrator", "root", "rota", "rotaasistan", "rota_asistan", "destek", "support", "sistem", "system",
+    "moderator", "mod", "yonetici", "info", "iletisim", "help",
+}
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
+PHONE_LIKE_RE = re.compile(r"^[\d\s()+\-]{7,}$")
+
+
+def is_phone_like(raw: str) -> bool:
+    """Rakam ağırlıklı yazılan giriş telefon sayılır; harf içeriyorsa kullanıcı adıdır."""
+    return bool(PHONE_LIKE_RE.match((raw or "").strip()))
+
+
+def norm_username(raw: str) -> str:
+    """Kullanıcı adını küçük harfe çevirip denetler. Hatalıysa 400 döner. Boşsa '' döner (kullanıcı adı yok)."""
+    u = (raw or "").strip().lower()
+    if not u:
+        return ""
+    if not USERNAME_RE.match(u):
+        raise HTTPException(400, "Kullanıcı adı 3–20 karakter olmalı: harf, rakam, _ ve nokta (en az bir harf)")
+    if u in RESERVED_USERNAMES:
+        raise HTTPException(400, "Bu kullanıcı adı kullanılamaz, başka bir ad seç")
+    return u
+
+
+def norm_email(raw: str) -> str:
+    """E-postayı küçük harfe çevirip biçimini denetler. Boşsa '' döner."""
+    e = (raw or "").strip().lower()
+    if not e:
+        return ""
+    if len(e) > 254 or not EMAIL_RE.match(e):
+        raise HTTPException(400, "E-posta biçimi geçersiz")
+    return e
+
+
 def hash_pw(p: str) -> str:
     salt = os.urandom(16).hex()
     dk = hashlib.pbkdf2_hmac("sha256", p.encode(), salt.encode(), 120000).hex()
@@ -42,6 +92,10 @@ def check_pw(p: str, h: str) -> bool:
         return hmac.compare_digest(got, dk)
     except Exception:
         return False
+
+
+# Hesap yokken de aynı süre harcansın (giriş denemesiyle "bu telefon kayıtlı mı" öğrenilmesin)
+DUMMY_HASH = hash_pw("zaman-esitleme")
 
 
 def make_token(user_id: str) -> str:

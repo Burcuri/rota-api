@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from .db import Base
@@ -21,7 +21,11 @@ class User(Base):
     phone = Column(String(16), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
     name = Column(String(120), nullable=False, default="")
-    active_role = Column(String(16), nullable=False, default="courier")  # courier | employer
+    active_role = Column(String(16), nullable=False, default="courier")  # courier | employer | sponsor
+    # Giriş için telefon yerine kullanılabilir. Küçük harfle saklanır, benzersizdir, boş olabilir (NULL).
+    username = Column(String(32), unique=True, index=True)
+    # İsteğe bağlı. Henüz DOĞRULANMIYOR (benzersiz de değil): doğrulama gelince doğrulanmış e-posta benzersiz olacak.
+    email = Column(String(254), index=True)
     lat = Column(Float)
     lon = Column(Float)
     created_at = Column(DateTime(timezone=True), default=now)
@@ -71,3 +75,19 @@ class JobPackage(Base):
     sort_m = Column(Float, default=0)
 
     job = relationship("Job", back_populates="packages")
+
+
+class ConsentLog(Base):
+    """Açık rıza kaydı: kim, hangi metin sürümüne, hangi seçeneklerle, NE ZAMAN (sunucu saati) rıza verdi / geri çekti.
+    Satırlar yalnız eklenir, hiç güncellenmez; son satır geçerli durumdur. Geri çekme = hepsi False olan yeni satır."""
+
+    __tablename__ = "consent_log"
+    id = Column(String(32), primary_key=True, default=uid)
+    user_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    version = Column(Integer, nullable=False, default=0)  # aydınlatma / açık rıza metin sürümü
+    voice = Column(Boolean, nullable=False, default=False)  # sesle yazma (ses yurt dışı servise gider)
+    ocr = Column(Boolean, nullable=False, default=False)  # adres okuma (görüntü OCR servisine gider)
+    grup_konum = Column(Boolean, nullable=False, default=False)  # konumumu grup arkadaşlarım görsün
+    aydinlatma_ms = Column(BigInteger, default=0)  # istemci saati (bilgi amaçlı, epoch ms)
+    acik_riza_ms = Column(BigInteger, default=0)  # istemci saati (bilgi amaçlı, epoch ms)
+    created_at = Column(DateTime(timezone=True), default=now, index=True)  # SUNUCU saati: hukuken geçerli zaman
