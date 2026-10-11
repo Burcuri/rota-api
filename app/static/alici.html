@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="origin">
+<title>Paket teslimi</title>
+<link rel="stylesheet" href="/static/leaflet/leaflet.css">
+<link rel="stylesheet" href="/static/alici.css?v=1">
+</head>
+<body>
+<header>
+  <div class="brand">ROTA <span>Paket teslimi</span></div>
+  <div id="addr" class="addr"></div>
+</header>
+
+<div id="banner" class="banner" role="status" aria-live="polite">Yükleniyor…</div>
+
+<div id="app" hidden>
+  <nav class="tabs" role="tablist">
+    <button role="tab" class="tab on" data-tab="aldim" aria-selected="true">Paketimi aldım</button>
+    <button role="tab" class="tab" data-tab="kapi" aria-selected="false">Kapının yeri</button>
+    <button role="tab" class="tab" data-tab="iletisim" aria-selected="false">İletişim</button>
+  </nav>
+
+  <main>
+    <section id="tab-aldim" class="pane">
+      <label id="takeBox" class="take off">
+        <input id="take" type="checkbox" disabled>
+        <span class="tick" aria-hidden="true"></span>
+        <span class="takeTxt">Paketimi aldım</span>
+      </label>
+      <p id="takeHint" class="hint">Kurye hedefe ulaşınca bu kutu açılır.</p>
+      <p class="warn">Paketi teslim almadan önce kutuyu işaretleyin. İşaretlenmeden teslim edilmiş sayılmaz.</p>
+    </section>
+
+    <section id="tab-kapi" class="pane" hidden>
+      <p class="hint big">Kapınızın tam önüne işareti koyun: haritaya dokunun ya da işareti sürükleyin. Kuryeler bu noktayı görür.</p>
+      <div id="map" aria-label="Harita"></div>
+      <div class="row">
+        <button id="locate" class="btn ghost" type="button">📍 Konumumu kullan</button>
+        <button id="savePin" class="btn" type="button">Kapının yeri burası</button>
+      </div>
+      <p id="pinMsg" class="msg"></p>
+    </section>
+
+    <section id="tab-iletisim" class="pane" hidden>
+      <label class="fld">Telefon
+        <input id="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="05xx xxx xx xx">
+      </label>
+      <label class="fld">E-posta (isteğe bağlı)
+        <input id="email" type="email" inputmode="email" autocomplete="email" placeholder="ornek@eposta.com">
+      </label>
+      <button id="saveContact" class="btn" type="button">Kaydet</button>
+      <p id="contactMsg" class="msg"></p>
+      <p class="hint">Adınız saklanmaz. Telefon ve e-posta yalnız bu teslim için kullanılır.</p>
+    </section>
+  </main>
+</div>
+
+<footer>
+  <p>Bu sayfa teslim onayı içindir; uygulama kurmanız gerekmez.</p>
+  <p>İşaretlediğiniz kapı noktası; bina numarası ve sokak adıyla birlikte, kuryelere rehber olması için ortak haritaya kaydedilir. Adınız, telefonunuz, daire veya kat bilginiz ortak haritaya kaydedilmez.</p>
+  <p>Telefon, e-posta ve bu teslime ait kayıtlar en geç 48 saat içinde silinir; “Paketimi aldım” işaretlenince telefon ve e-posta hemen silinir.</p>
+</footer>
+
+<script src="/static/leaflet/leaflet.js"></script>
+<script src="/static/alici.js?v=1"></script>
+</body>
+</html>

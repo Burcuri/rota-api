@@ -191,3 +191,58 @@ class DoorReport(Base):
     created_at = Column(DateTime(timezone=True), default=now, index=True)
 
     __table_args__ = (UniqueConstraint("point_id", "reporter", name="uq_door_report_point_reporter"),)
+
+
+class Handoff(Base):
+    """Teslim onayı ("Paketimi aldım"): kurye bir durak için alıcıya bağlantı üretir; alıcı bağlantıdan kapının yerini pinler,
+    iletişim bilgisini düzeltir ve kurye hedefe ulaştıktan sonra "Paketimi aldım" kutusunu işaretler.
+    GEÇMİŞ TUTULMAZ: alıcıyla ilgili her şey (telefon, e-posta, pin, durum) en geç expires_at'te (varsayılan 48 saat) silinir;
+    "Paketimi aldım" işaretlenince telefon ve e-posta hemen silinir. Alıcının adı HİÇ saklanmaz."""
+
+    __tablename__ = "handoffs"
+    id = Column(String(32), primary_key=True, default=uid)
+    token = Column(String(24), unique=True, nullable=False, index=True)  # alıcı bağlantısındaki tahmin edilemez kod
+    courier_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    ref = Column(String(64), nullable=False, default="")  # kurye uygulamasındaki durak kimliği (yalnız eşleştirme için)
+    status = Column(String(10), nullable=False, default="created")  # created | arrived | received
+    phone = Column(String(16), nullable=False, default="")
+    email = Column(String(254), nullable=False, default="")
+    # Kapının halka açık adres parçaları (alıcı pini ortak haritaya bununla yazılır; daire/kat/ad YOK)
+    province = Column(String(60), nullable=False, default="")
+    district = Column(String(80), nullable=False, default="")
+    neighborhood = Column(String(100), nullable=False, default="")
+    street = Column(String(120), nullable=False, default="")
+    site = Column(String(60), nullable=False, default="")
+    door = Column(String(40), nullable=False, default="")
+    lat = Column(Float, nullable=False)  # sistemin / kuryenin koyduğu pin (alıcı sayfasında başlangıç noktası)
+    lon = Column(Float, nullable=False)
+    pin_lat = Column(Float)
+    pin_lon = Column(Float)
+    pin_at = Column(DateTime(timezone=True))
+    mode = Column(String(8), nullable=False, default="test")  # test | sms | email: bağlantı alıcıya nasıl ulaştı
+    link_seen = Column(Boolean, nullable=False, default=False)  # kurye bağlantıyı gördü / paylaştı (alıcı pininin ağırlığı düşer)
+    send_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), default=now, index=True)
+    arrived_at = Column(DateTime(timezone=True))
+    received_at = Column(DateTime(timezone=True))
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+    __table_args__ = (Index("ix_handoffs_courier_ref", "courier_id", "ref"),)
+
+
+class ClientError(Base):
+    """Uygulamadan gelen hata raporu (kişisel veri ayıklanmış). Hesap kimliği YOK; yalnız kuruluma özel rastgele kodun özeti."""
+
+    __tablename__ = "client_errors"
+    id = Column(String(32), primary_key=True, default=uid)
+    created_at = Column(DateTime(timezone=True), default=now, index=True)
+    fingerprint = Column(String(24), nullable=False, index=True)
+    kind = Column(String(10), nullable=False, default="js")  # js | promise | render | api
+    fatal = Column(Boolean, nullable=False, default=False)
+    message = Column(String(300), nullable=False, default="")
+    stack = Column(Text, nullable=False, default="")
+    screen = Column(String(60), nullable=False, default="")
+    platform = Column(String(12), nullable=False, default="")
+    os_version = Column(String(20), nullable=False, default="")
+    app_version = Column(String(20), nullable=False, default="")
+    install = Column(String(16), nullable=False, default="")

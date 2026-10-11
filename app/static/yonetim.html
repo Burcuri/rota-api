@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Rota yönetim</title>
+<style>
+  :root{--ink:#0b1a2b;--muted:#3f4f63;--line:#b9c4d2;--card:#f1f5fa;--bad:#b00020;--ok:#0a7a3d}
+  *{box-sizing:border-box}
+  body{margin:0;font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink);background:#fff}
+  header{padding:14px 16px;border-bottom:2px solid var(--ink);font-weight:900;font-size:20px}
+  main{padding:14px 16px;max-width:980px;margin:0 auto}
+  input,button{font:inherit;padding:10px 12px;border-radius:10px;border:2px solid var(--ink)}
+  button{background:var(--ink);color:#fff;font-weight:800;cursor:pointer}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+  .stats{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}
+  .stat{flex:1;min-width:130px;background:var(--card);border:2px solid var(--line);border-radius:12px;padding:10px 12px}
+  .stat b{display:block;font-size:24px}
+  .err{border:2px solid var(--line);border-radius:12px;padding:10px 12px;margin:10px 0}
+  .err.fatal{border-color:var(--bad)}
+  .err h3{margin:0 0 4px;font-size:16px;word-break:break-word}
+  .meta{color:var(--muted);font-size:13.5px}
+  pre{white-space:pre-wrap;word-break:break-word;background:var(--card);padding:8px;border-radius:8px;font-size:12.5px;margin:8px 0 0}
+  #msg{font-weight:800;margin:8px 0}
+  .bad{color:var(--bad)}
+</style>
+</head>
+<body>
+<header>Rota Asistan · yönetim</header>
+<main>
+  <div class="row">
+    <input id="key" type="password" placeholder="Yönetici anahtarı" autocomplete="off" style="flex:1;min-width:200px">
+    <select id="days" style="padding:10px;border-radius:10px;border:2px solid var(--ink)">
+      <option value="1">Son 1 gün</option><option value="7" selected>Son 7 gün</option><option value="14">Son 14 gün</option>
+    </select>
+    <button id="go" type="button">Göster</button>
+  </div>
+  <div id="msg"></div>
+  <div id="stats" class="stats"></div>
+  <div id="list"></div>
+  <p class="meta">Hata raporlarında kişisel veri ayıklanır; hesap kimliği tutulmaz. Raporlar 14 gün saklanır.</p>
+</main>
+<script src="/static/yonetim.js?v=1"></script>
+</body>
+</html>

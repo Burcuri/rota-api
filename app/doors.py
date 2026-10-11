@@ -461,13 +461,15 @@ def make_router(daily_max: int = 400, require_consent: bool = False, trust_score
         mine = db.query(func.count(DoorReport.id)).filter(DoorReport.reporter == reporter_code(user.id), DoorReport.vote == "confirm").scalar() or 0
         return {"points": total, "verified": ok, "mine": mine}
 
-    def add_recipient_pin(db: Session, it: dict, recipient_key: str) -> dict:
-        """ADIM 3 İÇİN HAZIR: alıcı kendi kapısını pinlediğinde (alıcı sayfası) çağrılır; tek başına doğrulama puanı taşır.
-        recipient_key: telefon ya da bağlantı kodundan türetilmiş, kişiyi ele vermeyen kod."""
+    def add_recipient_pin(db: Session, it: dict, recipient_key: str, trusted: bool = True) -> dict:
+        """Alıcı sayfasından (teslim onayı) gelen kapı pini. recipient_key: bağlantıya özel kod (kişiyi ele vermez; her bağlantı tek oy).
+        trusted=True: bağlantı alıcıya SUNUCUDAN ulaştı, kurye görmedi → alıcının kendi sözü, puan 2, konumu o belirler.
+        trusted=False: kurye bağlantıyı gördü (test modu / QR / paylaşım) → kurye "alıcı" gibi pin koyabilir; sıradan oy gibi puan 1."""
+        source = "recipient" if trusted else "pin"
         c = Clean(ItemIn.model_validate({**it, "source": "pin", "vote": "confirm"}))
-        c.source = "recipient"
+        c.source = source
         code = hmac.new(SECRET.encode(), ("door-recipient:" + recipient_key).encode(), hashlib.sha256).hexdigest()[:24]
-        res = vote_on(db, c, code, SOURCE_WEIGHT["recipient"], "recipient")
+        res = vote_on(db, c, code, SOURCE_WEIGHT[source], source)
         db.commit()
         return res
 

@@ -1,10 +1,13 @@
 import os
+import threading
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -23,6 +26,8 @@ from .auth import (
 from .db import Base, engine, get_db
 from .geo import sort_packages
 from .doors import make_router as make_doors_router
+from .errors import make_router as make_errors_router
+from .handoff import make_router as make_handoff_router
 from .migrate import ensure_schema
 from .relay import make_router
 from .models import ConsentLog, Job, JobPackage, User, now, uid
@@ -50,13 +55,38 @@ DOOR_TRUST_SCORE = float(os.getenv("DOOR_TRUST_SCORE", "2"))  # "doğrulanmış"
 DOOR_MERGE_M = float(os.getenv("DOOR_MERGE_M", "35"))  # bu mesafe içindeki raporlar aynı nokta sayılır
 DOOR_REQUIRE_CONSENT = os.getenv("DOOR_REQUIRE_CONSENT", "0") == "1"  # 1 yazılırsa katkı için consent_log.kapi şartı aranır (varsayılan: şart yok, kişi verisi tutulmaz)
 
+# Teslim onayı ve hata takibi (Render ortam değişkeniyle değiştirilebilir)
+HANDOFF_TTL_HOURS = float(os.getenv("HANDOFF_TTL_HOURS", "48"))  # alıcıyla ilgili kayıtlar en geç bu kadar saat sonra SİLİNİR
+HANDOFF_DAILY_MAX = int(os.getenv("HANDOFF_DAILY_MAX", "300"))  # kurye başı 24 saatte en çok yeni bağlantı
+ERROR_KEEP_DAYS = float(os.getenv("ERROR_KEEP_DAYS", "14"))
+ERROR_MAX_ROWS = int(os.getenv("ERROR_MAX_ROWS", "5000"))
+ERROR_DAILY_MAX = int(os.getenv("ERROR_DAILY_MAX", "3000"))
+
+
 @asynccontextmanager
 async def lifespan(_app):
     relay_router.start_cleaner()  # ulaşmayan mesajları arka planda siler (Render ücretsizde zamanlanmış iş yok)
+    threading.Thread(target=handoff_router.loop, name="handoff-purge", daemon=True).start()  # süresi dolan teslim bağlantılarını siler
+    threading.Thread(target=_errors_loop, name="error-purge", daemon=True).start()
     yield
 
 
-app = FastAPI(title="Rota Asistan", version="1.2.0", lifespan=lifespan)
+def _errors_loop():
+    from .db import SessionLocal
+
+    while True:
+        time.sleep(3600)
+        try:
+            db = SessionLocal()
+            try:
+                errors_router.purge(db)
+            finally:
+                db.close()
+        except Exception as e:
+            print("[hata takibi] temizlik hatası:", type(e).__name__, flush=True)
+
+
+app = FastAPI(title="Rota Asistan", version="1.3.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -90,6 +120,38 @@ relay_router = make_router(RELAY_TTL_DAYS, RELAY_MAX_BYTES, RELAY_USER_MAX_BYTES
 app.include_router(relay_router)
 doors_router = make_doors_router(DOOR_DAILY_MAX, DOOR_REQUIRE_CONSENT, DOOR_TRUST_SCORE, DOOR_MERGE_M)
 app.include_router(doors_router)
+handoff_router = make_handoff_router(doors_router.add_recipient_pin, HANDOFF_TTL_HOURS, HANDOFF_DAILY_MAX)
+app.include_router(handoff_router)
+errors_router = make_errors_router(ERROR_KEEP_DAYS, ERROR_MAX_ROWS, ERROR_DAILY_MAX)
+app.include_router(errors_router)
+
+STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+# Alıcı sayfası ve yönetim sayfası: kod / anahtar içeren adresler önbelleğe alınmaz, adres başka sitelere sızdırılmaz,
+# çerçeve içine alınamaz; betikler yalnız kendi sunucumuzdan yüklenir (harita karoları OpenStreetMap'ten).
+_SECURE_PREFIXES = ("/a/", "/yonetim")
+_CSP = (
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: https://tile.openstreetmap.org https://*.tile.openstreetmap.org; connect-src 'self'; "
+    "frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+)
+
+
+@app.middleware("http")
+async def secure_headers(request: Request, call_next):
+    resp = await call_next(request)
+    p = request.url.path
+    if p.startswith(_SECURE_PREFIXES):
+        resp.headers["Cache-Control"] = "no-store"
+        resp.headers["Referrer-Policy"] = "origin"
+        resp.headers["X-Content-Type-Options"] = "nosniff"
+        resp.headers["X-Frame-Options"] = "DENY"
+        resp.headers["Content-Security-Policy"] = _CSP
+    elif p.startswith("/static/"):
+        resp.headers["X-Content-Type-Options"] = "nosniff"
+        resp.headers["Cache-Control"] = "no-cache"
+    return resp
 
 
 class RegisterIn(BaseModel):
@@ -272,9 +334,21 @@ def old_flow_only():
         raise HTTPException(410, "Bu akış kapatıldı: ilan sahibine mesaj gönderin")
 
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 def root():
     return {"status": "ok", "service": "rota-asistan"}
+
+
+@app.api_route("/health", methods=["GET", "HEAD"])
+def health():
+    """Uyandırma / izleme ucu: veritabanına dokunmaz, anında döner (Render ücretsiz servis 15 dk kullanılmayınca uyur;
+    dışarıdan düzenli çağrılırsa uyumaz). Ayrıntı: GUNCELLEME_ADIMLARI.md › "Sunucuyu uyanık tut"."""
+    return {"ok": True}
+
+
+@app.get("/yonetim", include_in_schema=False)
+def admin_page():
+    return FileResponse(os.path.join(STATIC_DIR, "yonetim.html"), media_type="text/html; charset=utf-8")
 
 
 @app.post("/v1/auth/register")
