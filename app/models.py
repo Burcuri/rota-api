@@ -159,6 +159,7 @@ class DoorPoint(Base):
     district = Column(String(80), default="")
     neighborhood = Column(String(100), default="")
     street = Column(String(120), default="")
+    site = Column(String(60), default="")  # site / bina / yapı adı (halka açık; ör. "Güneş Sitesi"); kişi adı değil
     lat = Column(Float, nullable=False)
     lon = Column(Float, nullable=False)
     score = Column(Float, nullable=False, default=0)  # onaylayan oyların ağırlık toplamı

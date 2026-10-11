@@ -18,6 +18,7 @@ ADD_COLUMNS = [
     ("consent_log", "sozlesme_version", "INTEGER"),
     ("consent_log", "sozlesme_ms", "BIGINT"),
     ("consent_log", "kapi", "BOOLEAN"),
+    ("door_points", "site", "VARCHAR(60)"),
 ]
 
 # create_all'un yeni kurulumda açtığı dizin adlarıyla aynı adlar (ix_<tablo>_<sütun>)

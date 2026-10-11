@@ -48,7 +48,7 @@ GROUP_MAX = int(os.getenv("GROUP_MAX", "7"))  # grup üst sınırı (gönderen d
 DOOR_DAILY_MAX = int(os.getenv("DOOR_DAILY_MAX", "400"))  # kişi başı 24 saatte en çok yeni oy
 DOOR_TRUST_SCORE = float(os.getenv("DOOR_TRUST_SCORE", "2"))  # "doğrulanmış" sayılmak için gereken puan (her kişi 1, alıcı 2)
 DOOR_MERGE_M = float(os.getenv("DOOR_MERGE_M", "35"))  # bu mesafe içindeki raporlar aynı nokta sayılır
-DOOR_REQUIRE_CONSENT = os.getenv("DOOR_REQUIRE_CONSENT", "1") != "0"  # katkı için açık rıza şartı (kapatmak önerilmez)
+DOOR_REQUIRE_CONSENT = os.getenv("DOOR_REQUIRE_CONSENT", "0") == "1"  # 1 yazılırsa katkı için consent_log.kapi şartı aranır (varsayılan: şart yok, kişi verisi tutulmaz)
 
 @asynccontextmanager
 async def lifespan(_app):

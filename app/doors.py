@@ -172,6 +172,7 @@ class ItemIn(BaseModel):
     district: str = Field(max_length=100)
     neighborhood: str = Field(max_length=120)
     street: str = Field(max_length=160)
+    site: str = Field(default="", max_length=120)
     door: str = Field(max_length=40)
     lat: float = Field(ge=34.0, le=43.0)  # Türkiye ve KKTC çevresi
     lon: float = Field(ge=25.0, le=45.5)
@@ -194,7 +195,8 @@ class Clean:
         self.district = tidy(it.district, 80)
         self.neighborhood = tidy(it.neighborhood, 100)
         self.street = tidy(_NO_TAIL.sub("", it.street), 120)
-        for label, v in (("il", self.province), ("ilçe", self.district), ("mahalle", self.neighborhood), ("sokak", self.street), ("kapı", tidy(it.door, 40))):
+        self.site = tidy(it.site, 60)
+        for label, v in (("il", self.province), ("ilçe", self.district), ("mahalle", self.neighborhood), ("sokak", self.street), ("site", self.site), ("kapı", tidy(it.door, 40))):
             if looks_personal(v):
                 raise ValueError(f"kisisel_veri:{label}")
         self.province_k = province_core(self.province)
@@ -217,7 +219,7 @@ class Clean:
         self.source = it.source if it.source in SOURCES_FROM_APP else "pin"
 
 
-def make_router(daily_max: int = 400, require_consent: bool = True, trust_score: float = 2.0, merge_m: float = 35.0, max_accuracy_m: float = 60.0) -> APIRouter:
+def make_router(daily_max: int = 400, require_consent: bool = False, trust_score: float = 2.0, merge_m: float = 35.0, max_accuracy_m: float = 60.0) -> APIRouter:
     r = APIRouter()
     wrong_radius_m = 90.0
     hide_wrong = 2.0
@@ -237,6 +239,7 @@ def make_router(daily_max: int = 400, require_consent: bool = True, trust_score:
             "lat": round(p.lat, 6),
             "lon": round(p.lon, 6),
             "street": p.street,
+            "site": p.site or "",
             "verified": verified(p),
             "confirms": p.confirms or 0,
         }
@@ -284,12 +287,14 @@ def make_router(daily_max: int = 400, require_consent: bool = True, trust_score:
                 t = now()
                 p = DoorPoint(
                     province_k=c.province_k, district_k=c.district_k, neigh_k=c.neigh_k, street_k=c.street_k, street_kind=c.street_kind,
-                    door_k=c.door_k, door_n=c.door_n, province=c.province, district=c.district, neighborhood=c.neighborhood, street=c.street,
+                    door_k=c.door_k, door_n=c.door_n, province=c.province, district=c.district, neighborhood=c.neighborhood, street=c.street, site=c.site,
                     lat=c.lat, lon=c.lon, score=0.0, wrong=0.0, confirms=0, hidden=False, created_at=t, updated_at=t,
                 )
                 db.add(p)
                 db.flush()
                 created = True
+        if c.vote == "confirm" and c.site and not p.site:
+            p.site = c.site  # ilk bildirilen site/bina adı kalır
         existing = db.query(DoorReport).filter(DoorReport.point_id == p.id, DoorReport.reporter == reporter).first()
         if existing is not None:
             if existing.vote == c.vote:

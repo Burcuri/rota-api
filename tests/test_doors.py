@@ -137,19 +137,37 @@ def test_everything_needs_login():
         assert getattr(client, method)(path).status_code == 401, path
 
 
-def test_reporting_needs_explicit_consent_but_reading_does_not():
+def test_reporting_needs_no_consent_by_default_only_login():
+    """Katman kişi verisi tutmaz: giriş yapmış herkes yazar ve okur (rıza şartı yalnız DOOR_REQUIRE_CONSENT=1 ile)."""
     a = area()
     tok, _ = person(kapi=False)
-    assert post(tok, item(a, 5)).status_code == 403
-    give_consent(tok, True)
     assert one(tok, item(a, 5))["status"] == "new"
-    other, _ = person(kapi=False)  # rızası olmayan biri de okuyabilir
+    other, _ = person(kapi=False)
     assert [d["door"] for d in street(other, a)] == ["5"]
-    give_consent(tok, False, at=1760000100000)  # geri çekme → yazma yeniden kapanır
-    assert post(tok, item(a, 6)).status_code == 403
-    hist = client.get("/v1/me/consent/history", headers=auth(tok)).json()
-    assert [h["kapi"] for h in hist] == [False, True]
-    assert client.get("/v1/me/consent", headers=auth(tok)).json()["kapi"] is False
+
+
+def test_strict_mode_still_requires_consent():
+    strict = FastAPI()
+    strict.include_router(make_router(require_consent=True))
+    sc = TestClient(strict)
+    a = area()
+    tok, _ = person(kapi=False)
+    assert sc.post("/v1/doors/report", headers=auth(tok), json={"items": [item(a, 5)]}).status_code == 403
+    give_consent(tok, True)
+    assert sc.post("/v1/doors/report", headers=auth(tok), json={"items": [item(a, 5)]}).status_code == 200
+    give_consent(tok, False, at=1760000100000)
+    assert sc.post("/v1/doors/report", headers=auth(tok), json={"items": [item(a, 6)]}).status_code == 403
+
+
+def test_site_or_building_name_is_stored_and_shown():
+    a = area()
+    tok, _ = person()
+    one(tok, item(a, 40, site="Güneş Sitesi"))
+    tok2, _ = person()
+    one(tok2, item(a, 40, dlat=M20 / 4, site="Başka Ad"))  # ilk ad kalır
+    d = street(tok, a)[0]
+    assert d["site"] == "Güneş Sitesi" and d["confirms"] == 2
+    assert one(tok, item(a, 41, site="0532 123 45 67"))["reason"] == "kisisel_veri:site"
 
 
 def test_consent_kapi_is_part_of_the_dedupe_check():
