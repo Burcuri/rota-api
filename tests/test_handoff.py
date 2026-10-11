@@ -223,7 +223,8 @@ def test_state_shows_no_courier_or_personal_data():
     tok, uid_ = courier()
     h = create(tok, send=True)
     st = client.get(f"/a/{token_of(h)}/state").json()
-    assert set(st) == {"status", "canConfirm", "received", "address", "area", "site", "start", "pin", "phone", "email", "expiresAt"}
+    assert set(st) == {"status", "canConfirm", "received", "closed", "review", "address", "area", "site", "start", "pin", "phone", "email", "expiresAt"}
+    assert st["review"] == {"allowed": False, "done": False, "data": None}  # kurye hedefe ulaşmadan anket açılmaz
     flat = json.dumps(st)
     assert uid_ not in flat and "Test" not in flat  # kuryenin kimliği / adı alıcı sayfasına çıkmaz
     assert st["address"] == "Barbaros Cad. No:227" and st["site"] == "Güneş Sitesi"

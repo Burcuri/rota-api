@@ -19,6 +19,14 @@ ADD_COLUMNS = [
     ("consent_log", "sozlesme_ms", "BIGINT"),
     ("consent_log", "kapi", "BOOLEAN"),
     ("door_points", "site", "VARCHAR(60)"),
+    # Dilim 4: yönetim (men, oturum sürümü, zorunlu şifre değişikliği) ve teslim kaydının kapanışı
+    ("users", "banned", "BOOLEAN DEFAULT FALSE"),
+    ("users", "banned_reason", "VARCHAR(300)"),
+    ("users", "banned_at", "TIMESTAMP WITH TIME ZONE"),
+    ("users", "token_version", "INTEGER DEFAULT 0"),
+    ("users", "must_change_password", "BOOLEAN DEFAULT FALSE"),
+    ("users", "last_login_at", "TIMESTAMP WITH TIME ZONE"),
+    ("handoffs", "closed_at", "TIMESTAMP WITH TIME ZONE"),
 ]
 
 # create_all'un yeni kurulumda açtığı dizin adlarıyla aynı adlar (ix_<tablo>_<sütun>)

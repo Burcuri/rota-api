@@ -270,7 +270,9 @@ def test_migration_survives_a_start_up_race(monkeypatch, tmp_path):
 
     eng = create_engine(f"sqlite:///{tmp_path / 'race.db'}")
     with eng.begin() as c:
-        c.execute(text("CREATE TABLE users (id VARCHAR(32) PRIMARY KEY, username VARCHAR(32), email VARCHAR(254))"))
+        # diğer süreç users sütunlarının hepsini çoktan eklemiş (yeni sütun eklenince bu test kendiliğinden güncel kalır)
+        cols = ", ".join(f"{col} {ddl}" for t, col, ddl in mg.ADD_COLUMNS if t == "users")
+        c.execute(text(f"CREATE TABLE users (id VARCHAR(32) PRIMARY KEY, {cols})"))
     monkeypatch.setattr(mg, "engine", eng)
     real_inspect = mg.inspect
     calls = {"n": 0}

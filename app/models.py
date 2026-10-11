@@ -29,6 +29,15 @@ class User(Base):
     lat = Column(Float)
     lon = Column(Float)
     created_at = Column(DateTime(timezone=True), default=now)
+    # --- Yönetim (Dilim 4). Eski satırlarda NULL = yok / 0 / kapalı sayılır ---
+    banned = Column(Boolean, default=False)  # yönetim hesabı askıya aldı: giriş ve tüm istekler 403
+    banned_reason = Column(String(300))
+    banned_at = Column(DateTime(timezone=True))
+    # Oturum sürümü: şifre değişince / yönetim "tüm oturumları kapat" deyince artar; eski sürümle imzalı oturumlar geçersiz olur
+    token_version = Column(Integer, default=0)
+    # Yönetim şifreyi sıfırladı: kullanıcı yeni şifre koyana kadar yalnız /v1/me ve /v1/me/password çalışır
+    must_change_password = Column(Boolean, default=False)
+    last_login_at = Column(DateTime(timezone=True))
 
     jobs_posted = relationship("Job", back_populates="employer", foreign_keys="Job.employer_id")
 
@@ -226,6 +235,9 @@ class Handoff(Base):
     arrived_at = Column(DateTime(timezone=True))
     received_at = Column(DateTime(timezone=True))
     expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    # Kurye teslimi bitirdi (uygulamadan sildi): telefon / e-posta silinir, kayıt kurye için görünmez olur; alıcı değerlendirme
+    # yazabilsin diye süresi dolana kadar (en çok HANDOFF_REVIEW_HOURS) kalır
+    closed_at = Column(DateTime(timezone=True))
 
     __table_args__ = (Index("ix_handoffs_courier_ref", "courier_id", "ref"),)
 
@@ -246,3 +258,75 @@ class ClientError(Base):
     os_version = Column(String(20), nullable=False, default="")
     app_version = Column(String(20), nullable=False, default="")
     install = Column(String(16), nullable=False, default="")
+
+
+class Admin(Base):
+    """Yönetici hesabı (yalnız web yönetim sayfasından girilir; uygulama kullanıcılarından AYRIDIR). İlk yönetici Render'daki
+    ADMIN_KEY ile oluşturulur. İki adımlı doğrulama (TOTP) isteğe bağlıdır; ADMIN_REQUIRE_2FA=1 ile zorunlu olur."""
+
+    __tablename__ = "admins"
+    id = Column(String(32), primary_key=True, default=uid)
+    username = Column(String(32), unique=True, nullable=False, index=True)
+    password_hash = Column(String(255), nullable=False)
+    totp_secret = Column(String(64))  # base32; boş = kurulmamış
+    totp_on = Column(Boolean, default=False)
+    totp_last_step = Column(BigInteger, default=0)  # aynı kodun ikinci kez kullanılmasını önler
+    token_version = Column(Integer, default=0)
+    disabled = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), default=now)
+    created_by = Column(String(40), default="")
+    last_login_at = Column(DateTime(timezone=True))
+
+
+class AdminAudit(Base):
+    """Yönetici işlem günlüğü: kim, ne zaman, kime/neye ne yaptı. Yalnız eklenir. Şifre / kod gibi gizli değerler YAZILMAZ;
+    telefon ve e-posta maskeli yazılır."""
+
+    __tablename__ = "admin_audit"
+    id = Column(String(32), primary_key=True, default=uid)
+    created_at = Column(DateTime(timezone=True), default=now, index=True)
+    admin_id = Column(String(32), index=True)
+    admin_name = Column(String(32), nullable=False, default="")
+    action = Column(String(40), nullable=False, index=True)
+    target_type = Column(String(12), nullable=False, default="")
+    target_id = Column(String(40), nullable=False, default="")
+    detail = Column(String(500), nullable=False, default="")
+    ip = Column(String(64), nullable=False, default="")
+
+
+class Event(Base):
+    """Etkinlik akışı (yönetim görür): kim ne zaman ne yaptı. Mesaj / adres İÇERİĞİ yazılmaz; yalnız olayın türü ve kısa bilgi
+    (ör. 'kaç kişiye gönderdi'). EVENT_KEEP_DAYS (varsayılan 60) gün sonra silinir."""
+
+    __tablename__ = "events"
+    id = Column(String(32), primary_key=True, default=uid)
+    created_at = Column(DateTime(timezone=True), default=now, index=True)
+    kind = Column(String(24), nullable=False, index=True)
+    user_id = Column(String(32), index=True)  # eylemi yapan hesap (alıcı gibi hesapsızlarda boş)
+    target_id = Column(String(40), nullable=False, default="")
+    meta = Column(String(500), nullable=False, default="")  # kısa JSON
+
+
+class Review(Base):
+    """Değerlendirme (anket): alıcı → kurye (bağlantı kodu ile, hesapsız), işveren → kurye, kurye → işveren. Hepsi 5 yıldız üzerinden.
+    Alıcının kimliği (ad, telefon) HİÇ tutulmaz; tek bağ, bağlantının kimliğidir (bir bağlantıya bir değerlendirme).
+    Yorum metnini yalnız yönetim okur; puanlanan taraf ve kuryeler yalnız yıldız ortalamasını (ve işletmenin ödeme oranlarını) görür."""
+
+    __tablename__ = "reviews"
+    id = Column(String(32), primary_key=True, default=uid)
+    created_at = Column(DateTime(timezone=True), default=now, index=True)
+    updated_at = Column(DateTime(timezone=True), default=now)
+    source = Column(String(10), nullable=False, index=True)  # recipient | employer | courier
+    subject_id = Column(String(32), nullable=False, index=True)  # puanlanan kurye / işveren
+    subject_role = Column(String(10), nullable=False, default="courier")
+    author_id = Column(String(32), index=True)  # yazan hesap; alıcıda boş
+    handoff_id = Column(String(32), unique=True)  # yalnız alıcı yorumu: bir bağlantıya bir değerlendirme
+    ref = Column(String(64), nullable=False, default="")  # ilan / durak kimliği (isteğe bağlı)
+    stars = Column(Integer, nullable=False)  # 1–5
+    app_stars = Column(Integer)  # yalnız alıcı: uygulama / teslim deneyimi (1–5)
+    answers = Column(Text, nullable=False, default="{}")  # JSON: tags, addressOk, onTime, complete
+    comment = Column(String(500), nullable=False, default="")
+    weight = Column(Float, nullable=False, default=1.0)  # güvenilir yoldan gelen 1; kuryenin görebildiği bağlantıdan gelen daha düşük
+    hidden = Column(Boolean, default=False)  # yönetim gizledi: ortalamaya girmez, kimseye gösterilmez
+    hidden_note = Column(String(200), nullable=False, default="")
+

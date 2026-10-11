@@ -6,7 +6,7 @@ import hashlib
 import hmac
 
 import jwt
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from .db import get_db
@@ -98,15 +98,50 @@ def check_pw(p: str, h: str) -> bool:
 DUMMY_HASH = hash_pw("zaman-esitleme")
 
 
-def make_token(user_id: str) -> str:
+class AccountBlocked(HTTPException):
+    """Yönetim hesabı askıya aldı. Uygulama `code` alanına bakıp kullanıcıyı çıkış yaptırır ve nedeni gösterir."""
+
+    code = "banned"
+
+    def __init__(self, reason: str = ""):
+        reason = (reason or "").strip()
+        msg = "Hesabınız askıya alındı."
+        if reason:
+            msg += f" Neden: {reason.rstrip('.')}."
+        super().__init__(403, msg + " İtiraz için destek ile iletişime geçin.")
+        self.reason = reason
+
+
+class PasswordChangeRequired(HTTPException):
+    """Yönetim şifreyi sıfırladı: kullanıcı yeni şifre koyana kadar yalnız MUST_CHANGE_OK yolları çalışır."""
+
+    code = "must_change_password"
+
+    def __init__(self):
+        super().__init__(403, "Yönetim şifrenizi sıfırladı. Devam etmek için yeni bir şifre belirleyin.")
+
+
+# Şifresi sıfırlanan kullanıcının kullanabildiği tek yollar: kendi bilgisi, şifre değiştirme, cihazı bırakma (çıkış)
+MUST_CHANGE_OK = {"/v1/me", "/v1/me/password", "/v1/devices/forget"}
+
+
+def make_token(user_id: str, tv: int = 0) -> str:
+    """Kullanıcı oturumu (30 gün). `tv` kullanıcının oturum sürümüdür: şifre değişince / yönetim oturumları kapatınca artar."""
     payload = {
         "sub": user_id,
+        "typ": "usr",
+        "tv": int(tv or 0),
         "exp": datetime.now(timezone.utc) + timedelta(days=30),
     }
     return jwt.encode(payload, SECRET, algorithm=ALGO)
 
 
+def user_token(user: User) -> str:
+    return make_token(user.id, user.token_version or 0)
+
+
 def current_user(
+    request: Request,
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> User:
@@ -117,7 +152,15 @@ def current_user(
         data = jwt.decode(token, SECRET, algorithms=[ALGO])
     except Exception:
         raise HTTPException(401, "Oturum geçersiz, tekrar giriş yap")
+    if data.get("typ", "usr") != "usr":  # yönetici oturumu kullanıcı ucu açamaz
+        raise HTTPException(401, "Oturum geçersiz, tekrar giriş yap")
     user = db.get(User, data.get("sub"))
     if not user:
         raise HTTPException(401, "Hesap bulunamadı")
+    if user.banned:
+        raise AccountBlocked(user.banned_reason or "")
+    if int(data.get("tv") or 0) != int(user.token_version or 0):
+        raise HTTPException(401, "Oturum sona erdi, tekrar giriş yap")
+    if user.must_change_password and request.url.path.rstrip("/") not in MUST_CHANGE_OK:
+        raise PasswordChangeRequired()
     return user

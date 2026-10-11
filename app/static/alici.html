@@ -7,7 +7,7 @@
 <meta name="referrer" content="origin">
 <title>Paket teslimi</title>
 <link rel="stylesheet" href="/static/leaflet/leaflet.css">
-<link rel="stylesheet" href="/static/alici.css?v=1">
+<link rel="stylesheet" href="/static/alici.css?v=3">
 </head>
 <body>
 <header>
@@ -21,6 +21,7 @@
   <nav class="tabs" role="tablist">
     <button role="tab" class="tab on" data-tab="aldim" aria-selected="true">Paketimi aldım</button>
     <button role="tab" class="tab" data-tab="kapi" aria-selected="false">Kapının yeri</button>
+    <button role="tab" class="tab" data-tab="degerlendir" aria-selected="false">Değerlendir</button>
     <button role="tab" class="tab" data-tab="iletisim" aria-selected="false">İletişim</button>
   </nav>
 
@@ -33,6 +34,7 @@
       </label>
       <p id="takeHint" class="hint">Kurye hedefe ulaşınca bu kutu açılır.</p>
       <p class="warn">Paketi teslim almadan önce kutuyu işaretleyin. İşaretlenmeden teslim edilmiş sayılmaz.</p>
+      <button id="goReview" class="btn ghost goReview" type="button" hidden>★ Kuryeyi değerlendir</button>
     </section>
 
     <section id="tab-kapi" class="pane" hidden>
@@ -43,6 +45,68 @@
         <button id="savePin" class="btn" type="button">Kapının yeri burası</button>
       </div>
       <p id="pinMsg" class="msg"></p>
+    </section>
+
+    <section id="tab-degerlendir" class="pane" hidden>
+      <p id="rvLocked" class="hint big">Kurye hedefe ulaşınca kuryeyi değerlendirebilirsiniz.</p>
+      <form id="rvForm" class="rv" hidden novalidate>
+        <p id="rvDone" class="note ok" role="status" hidden>Değerlendirmeniz alındı, teşekkürler ✓ İsterseniz aşağıdan değiştirip yeniden gönderebilirsiniz.</p>
+
+        <fieldset class="q">
+          <legend>Kuryeyi nasıl buldunuz? <b class="req">Zorunlu</b></legend>
+          <div class="stars" id="stC">
+            <label class="star"><input type="radio" name="stc" value="1"><span class="g" aria-hidden="true">☆</span><span class="sr">1 yıldız</span></label>
+            <label class="star"><input type="radio" name="stc" value="2"><span class="g" aria-hidden="true">☆</span><span class="sr">2 yıldız</span></label>
+            <label class="star"><input type="radio" name="stc" value="3"><span class="g" aria-hidden="true">☆</span><span class="sr">3 yıldız</span></label>
+            <label class="star"><input type="radio" name="stc" value="4"><span class="g" aria-hidden="true">☆</span><span class="sr">4 yıldız</span></label>
+            <label class="star"><input type="radio" name="stc" value="5"><span class="g" aria-hidden="true">☆</span><span class="sr">5 yıldız</span></label>
+          </div>
+          <p id="stCtxt" class="starTxt" aria-live="polite">Yıldıza dokunun (5 üzerinden)</p>
+        </fieldset>
+
+        <fieldset class="q">
+          <legend>Hangileri doğru? <span class="opt">İsteğe bağlı</span></legend>
+          <div class="chips" id="tags">
+            <button type="button" class="chip" data-k="hizli" aria-pressed="false">Hızlıydı</button>
+            <button type="button" class="chip" data-k="nazik" aria-pressed="false">Nazikti</button>
+            <button type="button" class="chip" data-k="sorunsuz" aria-pressed="false">Sorunsuz teslim</button>
+            <button type="button" class="chip" data-k="saglam" aria-pressed="false">Paket sağlamdı</button>
+            <button type="button" class="chip" data-k="gec" aria-pressed="false">Geç kaldı</button>
+            <button type="button" class="chip" data-k="ozensiz" aria-pressed="false">Özensizdi</button>
+          </div>
+        </fieldset>
+
+        <fieldset class="q">
+          <legend>Adres doğru muydu? <span class="opt">İsteğe bağlı</span></legend>
+          <div class="chips" id="addrOk">
+            <button type="button" class="chip" data-v="1" aria-pressed="false">Evet, doğruydu</button>
+            <button type="button" class="chip" data-v="0" aria-pressed="false">Hayır, yanlıştı</button>
+          </div>
+        </fieldset>
+
+        <fieldset class="q">
+          <legend>Bu uygulamayla deneyiminiz nasıldı? <span class="opt">İsteğe bağlı</span></legend>
+          <div class="stars" id="stA">
+            <label class="star"><input type="radio" name="sta" value="1"><span class="g" aria-hidden="true">☆</span><span class="sr">1 yıldız</span></label>
+            <label class="star"><input type="radio" name="sta" value="2"><span class="g" aria-hidden="true">☆</span><span class="sr">2 yıldız</span></label>
+            <label class="star"><input type="radio" name="sta" value="3"><span class="g" aria-hidden="true">☆</span><span class="sr">3 yıldız</span></label>
+            <label class="star"><input type="radio" name="sta" value="4"><span class="g" aria-hidden="true">☆</span><span class="sr">4 yıldız</span></label>
+            <label class="star"><input type="radio" name="sta" value="5"><span class="g" aria-hidden="true">☆</span><span class="sr">5 yıldız</span></label>
+          </div>
+          <p id="stAtxt" class="starTxt" aria-live="polite"></p>
+          <button type="button" id="stAclear" class="lnk" hidden>Seçimi kaldır</button>
+        </fieldset>
+
+        <label class="fld" for="comment">Yorumunuz <span class="opt">İsteğe bağlı</span>
+          <textarea id="comment" rows="4" maxlength="500" placeholder="Eklemek istediğiniz bir şey var mı?"></textarea>
+        </label>
+        <p class="cnt"><span id="cnt">0</span> / 500</p>
+        <p class="hint">Yorumda telefon numarası, adres ya da kimlik bilgisi yazmayın. Yorumunuzu yalnız uygulama yönetimi okur; kuryeye ve işyerine gösterilmez.</p>
+
+        <button id="rvSend" class="btn" type="submit">Gönder</button>
+        <p id="rvMsg" class="msg" role="status" aria-live="polite"></p>
+        <p class="hint">Değerlendirmeniz adınız ve telefonunuz olmadan kaydedilir; kuryenin genel puanına katılır.</p>
+      </form>
     </section>
 
     <section id="tab-iletisim" class="pane" hidden>
@@ -63,9 +127,10 @@
   <p>Bu sayfa teslim onayı içindir; uygulama kurmanız gerekmez.</p>
   <p>İşaretlediğiniz kapı noktası; bina numarası ve sokak adıyla birlikte, kuryelere rehber olması için ortak haritaya kaydedilir. Adınız, telefonunuz, daire veya kat bilginiz ortak haritaya kaydedilmez.</p>
   <p>Telefon, e-posta ve bu teslime ait kayıtlar en geç 48 saat içinde silinir; “Paketimi aldım” işaretlenince telefon ve e-posta hemen silinir.</p>
+  <p>Değerlendirmeniz (puan, seçimler ve yorum) adınız ve telefonunuz olmadan, en çok 1 yıl saklanır. Yorum metnini yalnız uygulama yönetimi okur.</p>
 </footer>
 
 <script src="/static/leaflet/leaflet.js"></script>
-<script src="/static/alici.js?v=1"></script>
+<script src="/static/alici.js?v=2"></script>
 </body>
 </html>

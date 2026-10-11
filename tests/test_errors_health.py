@@ -1,4 +1,4 @@
-"""Sunucuyu uyanık tutma ucu (/health) ve hata takibi (/v1/errors, /v1/admin/summary, /yonetim)."""
+"""Sunucuyu uyanık tutma ucu (/health) ve hata takibi (/v1/errors; görüntüleme: yönetici oturumuyla /v1/admin/errors)."""
 import itertools
 from datetime import timedelta
 
@@ -11,19 +11,18 @@ from app.errors import fingerprint, make_router, scrub
 from app.main import app, errors_router
 from app.models import ClientError, now
 
-from test_auth_consent import auth, reg
+from helpers import admin_login
 
 client = TestClient(app)
-KEY = "yonetici-anahtari-test-123"
 _n = itertools.count(1)
+_hdr: dict = {}
 
 
 @pytest.fixture(autouse=True)
-def _clean(monkeypatch):
+def _clean():
     for lim in errors_router.limiters:
         lim.reset()
     errors_router.state["n"] = 0
-    monkeypatch.setenv("ADMIN_KEY", KEY)
     yield
     for lim in errors_router.limiters:
         lim.reset()
@@ -35,8 +34,10 @@ def rep(**kw):
     return client.post("/v1/errors", json=d)
 
 
-def summary(key=KEY, days=7):
-    return client.get(f"/v1/admin/summary?days={days}", headers={"X-Admin-Key": key} if key is not None else {})
+def summary(days=7):
+    if not _hdr:  # bir kez yönetici oturumu aç
+        _hdr.update(admin_login()[0])
+    return client.get(f"/v1/admin/errors?days={days}", headers=_hdr)
 
 
 # ------------------------------------------------------------------ /health
@@ -115,22 +116,11 @@ def test_daily_cap_on_a_small_app():
 
 
 # ------------------------------------------------------------------ yönetici görünümü
-def test_admin_is_off_without_a_key_and_needs_the_right_one(monkeypatch):
-    monkeypatch.delenv("ADMIN_KEY", raising=False)
-    assert summary().status_code == 404  # anahtar tanımlı değil: uç yokmuş gibi
-    monkeypatch.setenv("ADMIN_KEY", "kisa")
-    assert summary("kisa").status_code == 404  # 12 karakterden kısa anahtar kabul edilmez
-    monkeypatch.setenv("ADMIN_KEY", KEY)
-    assert summary(None).status_code == 401
-    assert summary("yanlis").status_code == 401
-    assert summary(KEY).status_code == 200
-
-
-def test_admin_locks_out_after_ten_wrong_tries_even_for_the_right_key():
-    for _ in range(10):
-        assert summary("yanlis").status_code == 401
-    assert summary("yanlis").status_code == 429
-    assert summary(KEY).status_code == 429
+def test_errors_view_needs_an_admin_session_and_the_old_key_header_no_longer_works():
+    assert client.get("/v1/admin/errors").status_code == 401
+    assert client.get("/v1/admin/errors", headers={"X-Admin-Key": "test-yonetici-anahtari-123456"}).status_code == 401
+    assert client.get("/v1/admin/summary", headers={"X-Admin-Key": "test-yonetici-anahtari-123456"}).status_code in (404, 405)
+    assert summary().status_code == 200
 
 
 def test_summary_groups_counts_installs_and_fatal():
@@ -141,7 +131,7 @@ def test_summary_groups_counts_installs_and_fatal():
     j = summary().json()
     g = [x for x in j["errors"] if x["message"].startswith(tag)]
     assert len(g) == 1 and g[0]["count"] == 3 and g[0]["installs"] == 2 and g[0]["fatal"] is True
-    assert set(j["stats"]) == {"users", "doorPoints", "activeHandoffs", "errorRows"}
+    assert j["errorRows"] >= 3
     assert "telefon-1" not in str(j)
 
 

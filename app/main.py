@@ -6,30 +6,37 @@ from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from . import events
 from .auth import (
     DUMMY_HASH,
+    AccountBlocked,
+    PasswordChangeRequired,
     check_pw,
     current_user,
     hash_pw,
     is_phone_like,
-    make_token,
     norm_email,
     norm_phone,
     norm_username,
+    user_token,
 )
 from .db import Base, engine, get_db
+from .limits import Window
 from .geo import sort_packages
 from .doors import make_router as make_doors_router
+from .admin import make_router as make_admin_router
 from .errors import make_router as make_errors_router
 from .handoff import make_router as make_handoff_router
 from .migrate import ensure_schema
 from .relay import make_router
+from .reviews import make_router as make_reviews_router
+from .webapp import make_web_router
 from .models import ConsentLog, Job, JobPackage, User, now, uid
 
 Base.metadata.create_all(bind=engine)
@@ -58,20 +65,28 @@ DOOR_REQUIRE_CONSENT = os.getenv("DOOR_REQUIRE_CONSENT", "0") == "1"  # 1 yazıl
 # Teslim onayı ve hata takibi (Render ortam değişkeniyle değiştirilebilir)
 HANDOFF_TTL_HOURS = float(os.getenv("HANDOFF_TTL_HOURS", "48"))  # alıcıyla ilgili kayıtlar en geç bu kadar saat sonra SİLİNİR
 HANDOFF_DAILY_MAX = int(os.getenv("HANDOFF_DAILY_MAX", "300"))  # kurye başı 24 saatte en çok yeni bağlantı
+HANDOFF_REVIEW_HOURS = float(os.getenv("HANDOFF_REVIEW_HOURS", "24"))  # kurye teslimi bitirdikten sonra alıcı en çok bu kadar saat daha yorum yazabilir
 ERROR_KEEP_DAYS = float(os.getenv("ERROR_KEEP_DAYS", "14"))
 ERROR_MAX_ROWS = int(os.getenv("ERROR_MAX_ROWS", "5000"))
 ERROR_DAILY_MAX = int(os.getenv("ERROR_DAILY_MAX", "3000"))
+
+# Yönetim kayıtları (Render ortam değişkeniyle değiştirilebilir)
+EVENT_KEEP_DAYS = float(os.getenv("EVENT_KEEP_DAYS", "60"))  # etkinlik akışı bu kadar gün tutulur
+EVENT_MAX_ROWS = int(os.getenv("EVENT_MAX_ROWS", "50000"))
+REVIEW_KEEP_DAYS = float(os.getenv("REVIEW_KEEP_DAYS", "365"))  # değerlendirmeler (yorum metni dahil) bu kadar gün tutulur
+AUDIT_KEEP_DAYS = float(os.getenv("AUDIT_KEEP_DAYS", "365"))  # yönetici işlem günlüğü
 
 
 @asynccontextmanager
 async def lifespan(_app):
     relay_router.start_cleaner()  # ulaşmayan mesajları arka planda siler (Render ücretsizde zamanlanmış iş yok)
     threading.Thread(target=handoff_router.loop, name="handoff-purge", daemon=True).start()  # süresi dolan teslim bağlantılarını siler
-    threading.Thread(target=_errors_loop, name="error-purge", daemon=True).start()
+    threading.Thread(target=_housekeeping_loop, name="housekeeping", daemon=True).start()
     yield
 
 
-def _errors_loop():
+def _housekeeping_loop():
+    """Saatte bir: eski hata raporlarını, etkinlik akışını, yönetici günlüğünü ve değerlendirmeleri saklama süresine göre siler."""
     from .db import SessionLocal
 
     while True:
@@ -80,13 +95,14 @@ def _errors_loop():
             db = SessionLocal()
             try:
                 errors_router.purge(db)
+                admin_router.purge(db, EVENT_KEEP_DAYS, AUDIT_KEEP_DAYS, REVIEW_KEEP_DAYS, EVENT_MAX_ROWS)
             finally:
                 db.close()
         except Exception as e:
-            print("[hata takibi] temizlik hatası:", type(e).__name__, flush=True)
+            print("[temizlik] hata:", type(e).__name__, flush=True)
 
 
-app = FastAPI(title="Rota Asistan", version="1.3.0", lifespan=lifespan)
+app = FastAPI(title="Rota Asistan", version="1.5.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -96,6 +112,17 @@ app.add_middleware(
 )
 
 PUBLIC_BASE = os.getenv("PUBLIC_BASE", "").rstrip("/")
+
+
+@app.exception_handler(AccountBlocked)
+async def _blocked_handler(_request: Request, exc: AccountBlocked):
+    """Askıya alınmış hesap: uygulama `code: banned` görünce oturumu kapatır ve nedeni gösterir."""
+    return JSONResponse(status_code=403, content={"detail": exc.detail, "code": exc.code, "reason": exc.reason})
+
+
+@app.exception_handler(PasswordChangeRequired)
+async def _must_change_handler(_request: Request, exc: PasswordChangeRequired):
+    return JSONResponse(status_code=403, content={"detail": exc.detail, "code": exc.code})
 
 
 def drop_stored_addresses() -> int:
@@ -120,10 +147,14 @@ relay_router = make_router(RELAY_TTL_DAYS, RELAY_MAX_BYTES, RELAY_USER_MAX_BYTES
 app.include_router(relay_router)
 doors_router = make_doors_router(DOOR_DAILY_MAX, DOOR_REQUIRE_CONSENT, DOOR_TRUST_SCORE, DOOR_MERGE_M)
 app.include_router(doors_router)
-handoff_router = make_handoff_router(doors_router.add_recipient_pin, HANDOFF_TTL_HOURS, HANDOFF_DAILY_MAX)
+handoff_router = make_handoff_router(doors_router.add_recipient_pin, HANDOFF_TTL_HOURS, HANDOFF_DAILY_MAX, HANDOFF_REVIEW_HOURS)
 app.include_router(handoff_router)
+app.include_router(make_reviews_router())
 errors_router = make_errors_router(ERROR_KEEP_DAYS, ERROR_MAX_ROWS, ERROR_DAILY_MAX)
 app.include_router(errors_router)
+admin_router = make_admin_router(ERROR_KEEP_DAYS)
+app.include_router(admin_router)
+app.include_router(make_web_router())  # /web: uygulamanın tarayıcı sürümü (web ikizi)
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -151,6 +182,13 @@ async def secure_headers(request: Request, call_next):
     elif p.startswith("/static/"):
         resp.headers["X-Content-Type-Options"] = "nosniff"
         resp.headers["Cache-Control"] = "no-cache"
+    elif p == "/web" or p.startswith("/web/"):
+        # Web ikizi (uygulamanın kendisi): katı CSP YOK (harita karoları ve başka servisler çağrılır); çerçeveye alınamaz, adres yalnız kök olarak iletilir
+        resp.headers["X-Content-Type-Options"] = "nosniff"
+        resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        resp.headers["X-Frame-Options"] = "DENY"
+        resp.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+        resp.headers["Permissions-Policy"] = "geolocation=(self), camera=(), microphone=()"
     return resp
 
 
@@ -186,6 +224,13 @@ class ProfileIn(BaseModel):
 class LocIn(BaseModel):
     lat: float
     lon: float
+
+
+class PasswordIn(BaseModel):
+    old_password: str = Field(default="", alias="oldPassword", max_length=200)
+    new_password: str = Field(default="", alias="newPassword", max_length=200)
+
+    model_config = {"populate_by_name": True}
 
 
 class PkgIn(BaseModel):
@@ -249,6 +294,7 @@ def user_out(u: User) -> dict:
         "active_role": u.active_role,
         "lat": u.lat,
         "lon": u.lon,
+        "mustChangePassword": bool(u.must_change_password),
     }
 
 
@@ -371,21 +417,24 @@ def register(body: RegisterIn, db: Session = Depends(get_db)):
     if username and db.query(User).filter(User.username == username).first():
         raise HTTPException(400, "Bu kullanıcı adı alınmış, başka bir ad seç")
     u = User(
+        id=uid(),
         phone=phone,
         password_hash=hash_pw(body.password),
         name=name or phone,
         active_role=role,
         username=username or None,
         email=email or None,
+        last_login_at=now(),
     )
     db.add(u)
+    events.log(db, "user.register", u.id, role=role)
     try:
         db.commit()
     except IntegrityError:  # aynı anda başka biri aynı telefonu / kullanıcı adını aldı
         db.rollback()
         raise HTTPException(400, "Bu telefon ya da kullanıcı adı zaten kayıtlı")
     db.refresh(u)
-    return {"token": make_token(u.id), "user": user_out(u)}
+    return {"token": user_token(u), "user": user_out(u)}
 
 
 @app.post("/v1/auth/login")
@@ -401,7 +450,41 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
     ok = check_pw(body.password or "", u.password_hash if u else DUMMY_HASH)
     if not u or not ok:
         raise HTTPException(401, "Telefon / kullanıcı adı veya şifre yanlış")
-    return {"token": make_token(u.id), "user": user_out(u)}
+    if u.banned:  # şifreyi bilen kişiye söylenir (bilmeyene hesabın varlığı / durumu açıklanmaz)
+        raise AccountBlocked(u.banned_reason or "")
+    u.last_login_at = now()
+    events.log(db, "user.login", u.id)
+    db.commit()
+    return {"token": user_token(u), "user": user_out(u)}
+
+
+pw_fail = Window(8, 900)  # şifre değiştirirken yanlış "eski şifre": kullanıcı başı 15 dakikada 8
+
+
+@app.post("/v1/me/password")
+def change_password(body: PasswordIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Kullanıcı kendi şifresini değiştirir. Diğer cihazlardaki oturumlar kapanır; bu cihaza yeni oturum anahtarı döner.
+    Yönetim şifreyi sıfırladıysa (must_change_password) bu uç çalışır, diğerleri çalışmaz."""
+    if pw_fail.count(user.id) >= pw_fail.max_hits:
+        raise HTTPException(429, "Çok fazla yanlış deneme, biraz bekleyin")
+    if not check_pw(body.old_password or "", user.password_hash):
+        pw_fail.allow(user.id)
+        raise HTTPException(400, "Eski şifre yanlış")
+    new = body.new_password or ""
+    if len(new) < 6:
+        raise HTTPException(400, "Yeni şifre en az 6 karakter")
+    if len(new) > 128:
+        raise HTTPException(400, "Yeni şifre en fazla 128 karakter")
+    if new == body.old_password:
+        raise HTTPException(400, "Yeni şifre eskisiyle aynı olamaz")
+    pw_fail.reset_key(user.id)
+    user.password_hash = hash_pw(new)
+    user.must_change_password = False
+    user.token_version = (user.token_version or 0) + 1
+    events.log(db, "user.password", user.id)
+    db.commit()
+    db.refresh(user)
+    return {"token": user_token(user), "user": user_out(user)}
 
 
 @app.get("/v1/me")
@@ -413,6 +496,8 @@ def me(user: User = Depends(current_user)):
 def set_role(body: RoleIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
     if body.role not in ROLES:
         raise HTTPException(400, "Rol kurye, işveren veya sponsor olmalı")
+    if user.active_role != body.role:
+        events.log(db, "user.role", user.id, role=body.role)
     user.active_role = body.role
     db.commit()
     return user_out(user)
@@ -435,6 +520,7 @@ def update_profile(body: ProfileIn, user: User = Depends(current_user), db: Sess
         user.username = username or None
     if body.email is not None:
         user.email = norm_email(body.email) or None
+    events.log(db, "user.profile", user.id, fields=[k for k in ("name", "username", "email") if getattr(body, k) is not None])
     try:
         db.commit()
     except IntegrityError:  # aynı anda başka biri aynı kullanıcı adını aldı
@@ -528,6 +614,7 @@ def create_job(body: JobIn, user: User = Depends(current_user), db: Session = De
             )
         )
     job = Job(
+        id=uid(),
         employer_id=user.id,
         title=(body.title or "Teslimat işi").strip(),
         note=body.note or "",
@@ -543,6 +630,7 @@ def create_job(body: JobIn, user: User = Depends(current_user), db: Session = De
     user.lat = body.lat
     user.lon = body.lon
     db.add(job)
+    events.log(db, "job.create", user.id, job.id, n=count)
     db.commit()
     db.refresh(job)
     return job_out(job, db, include_packages=ESKI_AKIS)
@@ -559,6 +647,7 @@ def close_job(job_id: str, user: User = Depends(current_user), db: Session = Dep
     job.status = "closed"
     for p in list(job.packages):
         db.delete(p)
+    events.log(db, "job.close", user.id, job.id)
     db.commit()
     return {"ok": True}
 
@@ -567,7 +656,9 @@ def close_job(job_id: str, user: User = Depends(current_user), db: Session = Dep
 def open_jobs(user: User = Depends(current_user), db: Session = Depends(get_db)):
     rows = (
         db.query(Job)
+        .join(User, User.id == Job.employer_id)
         .filter(Job.status.in_(["open", "applied"] if ESKI_AKIS else ["open"]))
+        .filter(User.banned.is_not(True))  # askıya alınmış işverenin ilanı listelenmez
         .order_by(Job.created_at.desc())
         .limit(80)
         .all()

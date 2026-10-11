@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from . import events
 from .auth import current_user
 from .db import SessionLocal, get_db
 from .models import Device, RelayDelivery, RelayMsg, User
@@ -178,6 +179,7 @@ def make_router(ttl_days: float, max_bytes: int, user_max_bytes: int, group_max:
             device_of(db, user, b.device_id)
         for (dev,) in db.query(Device.id).filter(Device.user_id == user.id, Device.id != (b.device_id or "")).all():
             db.add(RelayDelivery(msg_id=msg.id, user_id=user.id, device_id=dev))
+        events.log(db, "relay.send", user.id, n=len(found))  # yalnız kaç kişiye gittiği; içerik ve alıcılar yazılmaz
         db.commit()
         return {"id": msg.id, "at": now.isoformat(), "recipients": sorted(found), "missing": [t for t in to if t not in found]}
 

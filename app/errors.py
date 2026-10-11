@@ -4,16 +4,14 @@
 - Kişisel veri sunucuda bir kez daha ayıklanır: e-posta, telefon benzeri uzun rakamlar, oturum / bağlantı kodları, adres parametreleri.
 - Hesap kimliği tutulmaz; yalnız kuruluma özel rastgele kodun özeti (kaç farklı telefonun etkilendiğini saymak için).
 - Saklama: ERROR_KEEP_DAYS (14) gün, en çok ERROR_MAX_ROWS (5000) satır. Günlük ve IP başı sınır var (kötüye kullanım).
-- Görüntüleme: Render ortamına ADMIN_KEY (en az 12 karakter) yazılırsa /yonetim sayfası açılır; yazılmazsa uç yok sayılır (404).
+- Görüntüleme: yönetim sayfasının (/yonetim) "Hatalar" sekmesi; yalnız giriş yapmış yönetici görür (admin.py).
 """
 import hashlib
 import hmac
-import os
 import re
-import time
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -21,7 +19,7 @@ from sqlalchemy.orm import Session
 from .auth import SECRET
 from .db import get_db
 from .limits import Window, client_ip
-from .models import ClientError, DoorPoint, Handoff, User, now
+from .models import ClientError, now
 
 KINDS = {"js", "promise", "render", "api"}
 
@@ -69,15 +67,41 @@ class ErrorIn(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+def summarize(db: Session, days: float, keep_days: float = 14) -> dict:
+    """Son `days` günün hata raporları, aynı hatalar gruplanmış (kaç kez, kaç farklı telefon, ilk / son görülme)."""
+    since = now() - timedelta(days=max(0.1, min(days, keep_days)))
+    rows = db.query(ClientError).filter(ClientError.created_at >= since).order_by(ClientError.created_at.desc()).limit(3000).all()
+    groups: dict[str, dict] = {}
+    for e in rows:
+        g = groups.get(e.fingerprint)
+        ts = e.created_at if e.created_at.tzinfo else e.created_at.replace(tzinfo=timezone.utc)
+        if g is None:
+            groups[e.fingerprint] = g = {
+                "fingerprint": e.fingerprint, "kind": e.kind, "message": e.message, "stack": e.stack, "screen": e.screen,
+                "platform": e.platform, "osVersion": e.os_version, "appVersion": e.app_version, "fatal": bool(e.fatal),
+                "count": 0, "installs": set(), "lastSeen": ts, "firstSeen": ts,
+            }
+        g["count"] += 1
+        g["fatal"] = g["fatal"] or bool(e.fatal)
+        if e.install:
+            g["installs"].add(e.install)
+        if ts < g["firstSeen"]:
+            g["firstSeen"] = ts
+        if ts > g["lastSeen"]:
+            g["lastSeen"] = ts
+            g["screen"], g["appVersion"], g["platform"] = e.screen, e.app_version, e.platform
+    out = sorted(groups.values(), key=lambda g: g["lastSeen"], reverse=True)
+    for g in out:
+        g["installs"] = len(g["installs"])
+        g["lastSeen"] = g["lastSeen"].isoformat()
+        g["firstSeen"] = g["firstSeen"].isoformat()
+    return {"days": days, "errors": out, "errorRows": db.query(func.count(ClientError.id)).scalar() or 0}
+
+
 def make_router(keep_days: float = 14, max_rows: int = 5000, daily_max: int = 3000) -> APIRouter:
     r = APIRouter()
     per_ip = Window(40, 3600)  # IP başı saatte 40 rapor
-    bad_keys = Window(10, 600)  # yanlış yönetici anahtarı denemesi
     day = {"d": "", "n": 0}
-
-    def admin_key() -> str:
-        k = os.getenv("ADMIN_KEY", "").strip()
-        return k if len(k) >= 12 else ""
 
     def purge(db: Session) -> int:
         cut = now() - timedelta(days=keep_days)
@@ -114,56 +138,7 @@ def make_router(keep_days: float = 14, max_rows: int = 5000, daily_max: int = 30
         db.commit()
         return {"ok": True}
 
-    def need_admin(request: Request, key: str | None):
-        ak = admin_key()
-        if not ak:
-            raise HTTPException(404, "Yok")  # ADMIN_KEY tanımlı değilse uç hiç yokmuş gibi davranır
-        ip = client_ip(request)
-        if bad_keys.count("bad:" + ip) >= bad_keys.max_hits:
-            raise HTTPException(429, "Çok fazla deneme, biraz bekleyin")  # kilitliyken doğru anahtar da denenmez
-        if not key or not hmac.compare_digest(key.encode(), ak.encode()):
-            bad_keys.allow("bad:" + ip)  # yanlış deneme kaydedilir
-            raise HTTPException(401, "Anahtar yanlış")
-        bad_keys.reset_key("bad:" + ip)  # doğru anahtar: sayaç sıfırlanır
-
-    @r.get("/v1/admin/summary")
-    def summary(request: Request, days: float = 7, x_admin_key: str | None = Header(default=None), db: Session = Depends(get_db)):
-        need_admin(request, x_admin_key)
-        since = now() - timedelta(days=max(0.1, min(days, keep_days)))
-        rows = db.query(ClientError).filter(ClientError.created_at >= since).order_by(ClientError.created_at.desc()).limit(3000).all()
-        groups: dict[str, dict] = {}
-        for e in rows:
-            g = groups.get(e.fingerprint)
-            ts = e.created_at if e.created_at.tzinfo else e.created_at.replace(tzinfo=timezone.utc)
-            if g is None:
-                groups[e.fingerprint] = g = {
-                    "fingerprint": e.fingerprint, "kind": e.kind, "message": e.message, "stack": e.stack, "screen": e.screen,
-                    "platform": e.platform, "osVersion": e.os_version, "appVersion": e.app_version, "fatal": bool(e.fatal),
-                    "count": 0, "installs": set(), "lastSeen": ts, "firstSeen": ts,
-                }
-            g["count"] += 1
-            g["fatal"] = g["fatal"] or bool(e.fatal)
-            if e.install:
-                g["installs"].add(e.install)
-            if ts < g["firstSeen"]:
-                g["firstSeen"] = ts
-            if ts > g["lastSeen"]:
-                g["lastSeen"] = ts
-                g["screen"], g["appVersion"], g["platform"] = e.screen, e.app_version, e.platform
-        out = sorted(groups.values(), key=lambda g: g["lastSeen"], reverse=True)
-        for g in out:
-            g["installs"] = len(g["installs"])
-            g["lastSeen"] = g["lastSeen"].isoformat()
-            g["firstSeen"] = g["firstSeen"].isoformat()
-        stats = {
-            "users": db.query(func.count(User.id)).scalar() or 0,
-            "doorPoints": db.query(func.count(DoorPoint.id)).scalar() or 0,
-            "activeHandoffs": db.query(func.count(Handoff.id)).scalar() or 0,
-            "errorRows": db.query(func.count(ClientError.id)).scalar() or 0,
-        }
-        return {"days": days, "errors": out, "stats": stats}
-
     r.purge = purge  # type: ignore[attr-defined]
-    r.limiters = (per_ip, bad_keys)  # type: ignore[attr-defined]
+    r.limiters = (per_ip,)  # type: ignore[attr-defined]
     r.state = day  # type: ignore[attr-defined]
     return r

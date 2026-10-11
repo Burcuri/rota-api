@@ -13,6 +13,10 @@ Gizlilik / saklama (kullanıcı kararı):
 - Alıcının kapı pini ortak kapı haritasına yalnız halka açık adres parçalarıyla (sokak, kapı no, site adı) ve konumla yazılır; telefon / e-posta oraya girmez.
 - Alıcı pininin ağırlığı: bağlantı alıcıya SUNUCUDAN ulaştıysa (kurye görmediyse) 2 (alıcının kendi sözü); kurye bağlantıyı gördüyse
   (test modu, QR, paylaşım) 1 — çünkü kurye kendi bağlantısıyla "alıcı" gibi pin koyabilir.
+- Değerlendirme (Dilim 4): kurye hedefe ulaştıktan sonra alıcı aynı bağlantıdan kuryeyi 5 yıldızla puanlar, standart soruları yanıtlar,
+  yorum yazar (POST /a/{kod}/review). Hesap gerekmez; yalnız gerçek bir teslim bağlantısının kodu ile. Kurye teslimi bitirince (DELETE)
+  kayıt hemen silinmez: telefon / e-posta silinir, kayıt kuryeden gizlenir, alıcı yorum yazabilsin diye süresi dolana kadar (en çok
+  HANDOFF_REVIEW_HOURS, varsayılan 24 saat) kalır. 48 saatlik üst sınır değişmez.
 """
 import math
 import os
@@ -27,12 +31,12 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.orm import Session
 
-from . import notify
+from . import events, notify, reviews
 from .auth import current_user, norm_email, norm_phone
 from .db import SessionLocal, get_db
 from .doors import dist_m, looks_personal, tidy
 from .limits import Window, client_ip
-from .models import Handoff, User, now
+from .models import Handoff, Review, User, now, uid
 
 SMS_TEXT = 'Paketiniz teslim edilene kadar bu mesajı silmeyiniz. Teslim almadan önce bağlantıdan "Paketimi aldım" kutusunu işaretleyiniz; işaretlenmeden teslim edilmiş sayılmaz. {link}'
 EMAIL_SUBJECT = 'Paketiniz yolda: "Paketimi aldım" bağlantısı'
@@ -122,7 +126,17 @@ class ReceivedIn(BaseModel):
     checked: bool = True
 
 
-def make_router(add_pin, ttl_hours: float = 48, daily_max: int = 300) -> APIRouter:
+class ReviewIn(BaseModel):
+    stars: int
+    app_stars: int | None = Field(default=None, alias="appStars")
+    tags: list[str] = Field(default_factory=list, max_length=12)
+    address_ok: bool | None = Field(default=None, alias="addressOk")
+    comment: str = Field(default="", max_length=600)
+
+    model_config = {"populate_by_name": True}
+
+
+def make_router(add_pin, ttl_hours: float = 48, daily_max: int = 300, review_hours: float = 24) -> APIRouter:
     """add_pin(db, item, recipient_key, trusted): ortak kapı haritasına alıcı pini ekler (doors.make_router(...).add_recipient_pin)."""
     r = APIRouter()
     ip_read = Window(240, 60)  # alıcı sayfası: IP başı dakikada 240 okuma
@@ -144,7 +158,7 @@ def make_router(add_pin, ttl_hours: float = 48, daily_max: int = 300) -> APIRout
 
     def mine(db: Session, user: User, hid: str) -> Handoff:
         h = db.get(Handoff, hid)
-        if h is None or h.courier_id != user.id or utc(h.expires_at) < now():
+        if h is None or h.courier_id != user.id or utc(h.expires_at) < now() or h.closed_at is not None:
             raise HTTPException(404, "Bağlantı bulunamadı")
         return h
 
@@ -200,7 +214,7 @@ def make_router(add_pin, ttl_hours: float = 48, daily_max: int = 300) -> APIRout
             raise HTTPException(422, "Durak kimliği boş")
         h = (
             db.query(Handoff)
-            .filter(Handoff.courier_id == user.id, Handoff.ref == ref, Handoff.expires_at > now())
+            .filter(Handoff.courier_id == user.id, Handoff.ref == ref, Handoff.expires_at > now(), Handoff.closed_at.is_(None))
             .order_by(Handoff.created_at.desc())
             .first()
         )
@@ -217,10 +231,11 @@ def make_router(add_pin, ttl_hours: float = 48, daily_max: int = 300) -> APIRout
             if db.query(Handoff).filter(Handoff.courier_id == user.id, Handoff.created_at > since).count() >= daily_max:
                 raise HTTPException(429, "Günlük bağlantı sınırı doldu")
             h = Handoff(
-                token=secrets.token_urlsafe(12), courier_id=user.id, ref=ref, phone=phone, email=email, lat=b.lat, lon=b.lon,
+                id=uid(), token=secrets.token_urlsafe(12), courier_id=user.id, ref=ref, phone=phone, email=email, lat=b.lat, lon=b.lon,
                 expires_at=now() + timedelta(hours=ttl_hours), **parts,
             )
             db.add(h)
+            events.log(db, "handoff.create", user.id, h.id)
         elif h.status != "received":  # güncel bilgiyi yaz (alıcı onayladıktan sonra telefon / e-posta tekrar yazılmaz)
             h.lat, h.lon = b.lat, b.lon
             for k, v in parts.items():
@@ -274,6 +289,7 @@ def make_router(add_pin, ttl_hours: float = 48, daily_max: int = 300) -> APIRout
         if h.status == "created":
             h.status = "arrived"
             h.arrived_at = now()
+            events.log(db, "handoff.arrived", user.id, h.id)
             db.commit()
         return out(request, h)
 
@@ -286,7 +302,7 @@ def make_router(add_pin, ttl_hours: float = 48, daily_max: int = 300) -> APIRout
             return {"items": []}
         rows = (
             db.query(Handoff)
-            .filter(Handoff.courier_id == user.id, Handoff.ref.in_(wanted), Handoff.expires_at > now())
+            .filter(Handoff.courier_id == user.id, Handoff.ref.in_(wanted), Handoff.expires_at > now(), Handoff.closed_at.is_(None))
             .order_by(Handoff.created_at.desc())
             .all()
         )
@@ -301,10 +317,19 @@ def make_router(add_pin, ttl_hours: float = 48, daily_max: int = 300) -> APIRout
 
     @r.delete("/v1/handoffs/{hid}")
     def remove(hid: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        """Kurye teslimi bitirdi / durağı kaldırdı. Hedefe hiç ulaşılmadıysa kayıt tamamen silinir. Ulaşıldıysa kayıt KAPANIR:
+        telefon / e-posta hemen silinir, kurye için görünmez olur, alıcı yorum yazabilsin diye en çok `review_hours` saat daha kalır."""
         h = db.get(Handoff, hid)
-        if h is not None and h.courier_id == user.id:
+        if h is None or h.courier_id != user.id:
+            return {"ok": True}
+        if h.status == "created" or h.closed_at is not None:
             db.delete(h)
-            db.commit()
+        else:
+            scrub_contact(h)
+            h.closed_at = now()
+            h.expires_at = min(utc(h.expires_at), now() + timedelta(hours=review_hours))
+            events.log(db, "handoff.closed", user.id, h.id)
+        db.commit()
         return {"ok": True}
 
     # ------------------------------------------------------------------ alıcı (herkese açık, bağlantı kodu ile)
@@ -335,13 +360,24 @@ def make_router(add_pin, ttl_hours: float = 48, daily_max: int = 300) -> APIRout
         """Alıcı sayfası (kurulum gerektirmez). Sayfa kendi içinde durumu sorar; geçersiz kod bu yanıttan anlaşılmaz."""
         return FileResponse(os.path.join(STATIC_DIR, "alici.html"), media_type="text/html; charset=utf-8")
 
+    def review_state(db: Session, h: Handoff) -> dict:
+        """Değerlendirme sekmesi: kurye hedefe ulaştıktan sonra açılır. Daha önce yazılmışsa içeriği geri verilir (düzeltebilsin)."""
+        rv = db.query(Review).filter(Review.handoff_id == h.id).first()
+        data = None
+        if rv is not None:
+            a = reviews.answers_of(rv)
+            data = {"stars": rv.stars, "appStars": rv.app_stars, "tags": a.get("tags") or [], "addressOk": a.get("addressOk"), "comment": rv.comment or ""}
+        return {"allowed": h.status in ("arrived", "received"), "done": rv is not None, "data": data}
+
     @r.get("/a/{token}/state")
     def state(token: str, request: Request, db: Session = Depends(get_db)):
         h = by_token(request, token, db)
         return {
             "status": h.status,
-            "canConfirm": h.status == "arrived",
+            "canConfirm": h.status == "arrived" and h.closed_at is None,
             "received": h.status == "received",
+            "closed": h.closed_at is not None,
+            "review": review_state(db, h),
             "address": street_label(h),
             "area": ", ".join(x for x in (h.neighborhood, h.district) if x),
             "site": h.site,
@@ -363,6 +399,7 @@ def make_router(add_pin, ttl_hours: float = 48, daily_max: int = 300) -> APIRout
             h.status = "received"
             h.received_at = now()
             scrub_contact(h)  # artık gerekmiyor: telefon / e-posta hemen silinir
+            events.log(db, "handoff.received", h.courier_id, h.id)
             db.commit()
         return {"ok": True, "status": h.status}
 
@@ -385,14 +422,30 @@ def make_router(add_pin, ttl_hours: float = 48, daily_max: int = 300) -> APIRout
                 h = db.query(Handoff).filter(Handoff.token == token).first()
                 h.pin_lat, h.pin_lon, h.pin_at = b.lat, b.lon, now()
                 layer = None
+        events.log(db, "handoff.pin", h.courier_id, h.id, layer=bool(layer))
         db.commit()
         return {"ok": True, "layer": bool(layer)}
+
+    @r.post("/a/{token}/review")
+    def review(token: str, b: ReviewIn, request: Request, db: Session = Depends(get_db)):
+        """Alıcının anketi: kurye puanı (zorunlu) + hızlı seçimler + adres doğru muydu + uygulama deneyimi + yorum. Kurye hedefe
+        ulaşmadan açılmaz. Tekrar gönderilirse öncekini günceller."""
+        h = by_token(request, token, db, write=True)
+        if h.status not in ("arrived", "received"):
+            raise HTTPException(409, "Kurye hedefe ulaşınca değerlendirebilirsiniz.")
+        if not (1 <= b.stars <= 5):
+            raise HTTPException(400, "Kurye puanı 1 ile 5 arasında olmalı")
+        if b.app_stars is not None and not (1 <= b.app_stars <= 5):
+            raise HTTPException(400, "Uygulama puanı 1 ile 5 arasında olmalı")
+        reviews.save_recipient_review(db, h, b.stars, b.app_stars, b.tags, b.address_ok, b.comment)
+        db.commit()
+        return {"ok": True, "review": review_state(db, h)}
 
     @r.post("/a/{token}/contact")
     def contact(token: str, b: ContactIn, request: Request, db: Session = Depends(get_db)):
         h = by_token(request, token, db, write=True)
-        if h.status == "received":
-            return {"ok": True, "phone": "", "email": ""}  # onaylandıktan sonra bilgi tutulmaz
+        if h.status == "received" or h.closed_at is not None:
+            return {"ok": True, "phone": "", "email": ""}  # onaylandıktan / teslim bittikten sonra bilgi tutulmaz
         changed_mail = False
         if b.phone is not None:
             p = try_phone(b.phone)

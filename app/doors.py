@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from . import events
 from .auth import SECRET, current_user
 from .db import get_db
 from .models import ConsentLog, DoorPoint, DoorReport, User, now
@@ -357,6 +358,8 @@ def make_router(daily_max: int = 400, require_consent: bool = False, trust_score
             if res["status"] in ("new", "confirmed", "changed", "flagged"):
                 accepted += 1
             results.append(res)
+        if accepted:
+            events.log(db, "door.report", user.id, n=accepted)
         db.commit()
         return {"results": results, "accepted": accepted}
 
