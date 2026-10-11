@@ -1,0 +1,23 @@
+name: keepalive
+on:
+  schedule:
+    - cron: "*/10 4-21 * * *"
+  workflow_dispatch: {}
+permissions: {}
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Sunucuyu uyandır
+        env:
+          URL: ${{ vars.SERVER_URL || 'https://rota-sunucu.onrender.com' }}
+        run: |
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -m 70 -w "%{http_code}" "$URL/health" || true)
+            echo "deneme $i: HTTP ${code:-yok}"
+            if [ "$code" = "200" ]; then exit 0; fi
+            sleep 20
+          done
+          echo "Sunucu yanıt vermedi; sonraki turda tekrar denenecek."
+          exit 0
