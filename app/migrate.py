@@ -27,6 +27,8 @@ ADD_COLUMNS = [
     ("users", "must_change_password", "BOOLEAN DEFAULT FALSE"),
     ("users", "last_login_at", "TIMESTAMP WITH TIME ZONE"),
     ("handoffs", "closed_at", "TIMESTAMP WITH TIME ZONE"),
+    # Dilim 5: kurye araç profili için ayrı açık rıza
+    ("consent_log", "arac", "BOOLEAN"),
 ]
 
 # create_all'un yeni kurulumda açtığı dizin adlarıyla aynı adlar (ix_<tablo>_<sütun>)

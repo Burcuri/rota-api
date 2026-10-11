@@ -165,3 +165,18 @@ def test_admin_page_served_with_secure_headers():
     assert r.status_code == 200 and "yönetim" in r.text.lower()
     assert r.headers["cache-control"] == "no-store" and "script-src 'self'" in r.headers["content-security-policy"]
     assert client.get("/static/yonetim.js").status_code == 200
+
+
+def test_validation_errors_name_the_field_but_never_echo_the_value():
+    from test_auth_consent import auth, reg
+
+    tok = reg().json()["token"]
+    secret = "çok-gizli-" + "x" * 200
+    r = client.post("/v1/me/password", json={"oldPassword": secret, "newPassword": "yeni-sifre-1"}, headers=auth(tok))
+    assert r.status_code == 422
+    assert "çok-gizli" not in r.text and "xxxxxxxx" not in r.text
+    d = r.json()["detail"]
+    assert isinstance(d, list) and d[0]["loc"][-1] in ("oldPassword", "old_password") and d[0]["msg"]
+    # JSON'a sığmayan sayı yanıtı çökertmez (varsayılan işleyici 500 verirdi)
+    r2 = client.post("/v1/me/location", content='{"lat": NaN, "lon": 1}', headers={**auth(tok), "Content-Type": "application/json"})
+    assert r2.status_code == 422 and "NaN" not in r2.text

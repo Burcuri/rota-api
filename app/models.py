@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import relationship
 
 from .db import Base
@@ -103,6 +103,8 @@ class ConsentLog(Base):
     grup_konum = Column(Boolean, nullable=False, default=False)  # konumumu grup arkadaşlarım görsün
     # Ortak kapı noktası katmanına katkı (teslim ettiğim kapının sokak/no/konumu tüm kullanıcılara görünür). Eski satırlarda NULL = kapalı
     kapi = Column(Boolean, default=False)
+    # Araç profilimi işletmeler görsün (AYRI açık rıza; kurye araç ekranında verir / geri çeker). Eski satırlarda NULL = kapalı
+    arac = Column(Boolean, default=False)
     aydinlatma_ms = Column(BigInteger, default=0)  # istemci saati (bilgi amaçlı, epoch ms)
     acik_riza_ms = Column(BigInteger, default=0)  # istemci saati (bilgi amaçlı, epoch ms)
     created_at = Column(DateTime(timezone=True), default=now, index=True)  # SUNUCU saati: hukuken geçerli zaman
@@ -330,3 +332,51 @@ class Review(Base):
     hidden = Column(Boolean, default=False)  # yönetim gizledi: ortalamaya girmez, kimseye gösterilmez
     hidden_note = Column(String(200), nullable=False, default="")
 
+
+class Follow(Base):
+    """Takip ("Follow"): işveren, mesajlaştığı bir kuryeyi harita üzerinde canlı izler. İzin KURYEDEN gelir, her seferinde:
+    işveren istek gönderir (asked), kurye kabul edince (active) konumunu paylaşmaya başlar; kurye istediği an durdurabilir.
+    KONUM GEÇMİŞİ TUTULMAZ: satırda yalnız SON nokta durur, yenisi gelince üstüne yazılır; takip bitince (ended) ya da nokta
+    30 dakikadan eskiyse SİLİNİR. Konumu yalnız bu takibin işvereni okur, yalnız takip sürerken. Etkinlik akışına koordinat yazılmaz.
+    Biten satır (konumsuz) FOLLOW_KEEP_HOURS (24 saat) sonra silinir. Bir kuryenin aynı anda tek aktif takibi olur."""
+
+    __tablename__ = "follows"
+    id = Column(String(32), primary_key=True, default=uid)
+    employer_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    courier_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    status = Column(String(10), nullable=False, default="asked", index=True)  # asked | active | ended
+    # declined | cancelled | stopped_employer | stopped_courier | done | expired | role | ban
+    end_reason = Column(String(20), nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), default=now)
+    accepted_at = Column(DateTime(timezone=True))
+    ended_at = Column(DateTime(timezone=True), index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)  # istek: yanıt süresi; aktif: en uzun takip süresi
+    # Son nokta (geçmiş yok). Takip bitince hepsi NULL
+    last_lat = Column(Float)
+    last_lon = Column(Float)
+    last_acc = Column(Float)
+    last_at = Column(DateTime(timezone=True))
+    # Kuryenin ilerlemesi: bitirilen / başarısız durakların kimlikleri (telefonun ürettiği rastgele kimlikler; ADRES YOK) ve toplam
+    progress = Column(Text, nullable=False, default="")
+
+    __table_args__ = (
+        # Bir kuryenin aynı anda tek aktif takibi (iki işletme aynı kuryeyi aynı anda izleyemez)
+        Index("uq_follow_courier_active", "courier_id", unique=True, sqlite_where=text("status = 'active'"), postgresql_where=text("status = 'active'")),
+        # Aynı işveren-kurye çifti için tek açık (bekleyen / aktif) kayıt: tekrarlanan istek yeni satır açmaz
+        Index("uq_follow_open_pair", "employer_id", "courier_id", unique=True, sqlite_where=text("status IN ('asked','active')"), postgresql_where=text("status IN ('asked','active')")),
+    )
+
+
+class CourierProfile(Base):
+    """Kuryenin işletmelere GÖSTERDİĞİ araç profili. Yalnız kuryenin AYRI açık rızası (consent_log.arac) varken yazılır ve okunur;
+    rıza geri çekilince satır silinir. Plaka ve araç fotoğrafı BURADA YOK: telefondan çıkmaz."""
+
+    __tablename__ = "courier_profiles"
+    user_id = Column(String(32), ForeignKey("users.id"), primary_key=True)
+    vehicle = Column(String(12), nullable=False, default="motor")  # motor | araba | bisiklet | yaya
+    capacity = Column(String(40), nullable=False, default="")  # serbest metin, ör. "2 koli, 1 sipariş çantası"
+    areas = Column(Text, nullable=False, default="[]")  # JSON liste: çalışma bölgeleri (en çok 8)
+    available = Column(Boolean, nullable=False, default=True)
+    from_hhmm = Column(String(5), nullable=False, default="09:00")
+    to_hhmm = Column(String(5), nullable=False, default="22:00")
+    updated_at = Column(DateTime(timezone=True), default=now, onupdate=now)

@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -32,6 +33,8 @@ from .geo import sort_packages
 from .doors import make_router as make_doors_router
 from .admin import make_router as make_admin_router
 from .errors import make_router as make_errors_router
+from .follow import make_router as make_follow_router
+from .vehicle import make_router as make_vehicle_router, withdraw as vehicle_withdraw
 from .handoff import make_router as make_handoff_router
 from .migrate import ensure_schema
 from .relay import make_router
@@ -76,11 +79,20 @@ EVENT_MAX_ROWS = int(os.getenv("EVENT_MAX_ROWS", "50000"))
 REVIEW_KEEP_DAYS = float(os.getenv("REVIEW_KEEP_DAYS", "365"))  # değerlendirmeler (yorum metni dahil) bu kadar gün tutulur
 AUDIT_KEEP_DAYS = float(os.getenv("AUDIT_KEEP_DAYS", "365"))  # yönetici işlem günlüğü
 
+# Takip ("Follow": işverenin kuryeyi haritada canlı izlemesi; izin kuryeden, konum geçmişi tutulmaz)
+FOLLOW_ASK_MIN = float(os.getenv("FOLLOW_ASK_MIN", "30"))  # kurye takip isteğine en çok bu kadar dakika içinde yanıt verir
+FOLLOW_MAX_HOURS = float(os.getenv("FOLLOW_MAX_HOURS", "12"))  # bir takip en çok bu kadar saat sürer (sonra yeniden izin gerekir)
+FOLLOW_KEEP_HOURS = float(os.getenv("FOLLOW_KEEP_HOURS", "24"))  # biten takip kaydı (konumsuz) bu kadar saat sonra silinir
+FOLLOW_STALE_MIN = float(os.getenv("FOLLOW_STALE_MIN", "30"))  # bu kadar dakikadır güncellenmeyen konum silinir
+FOLLOW_COOLDOWN_MIN = float(os.getenv("FOLLOW_COOLDOWN_MIN", "10"))  # reddedilen isteğin aynı işverenden yeniden gelmesi için bekleme
+VEHICLE_VIEW_PER_MIN = int(os.getenv("VEHICLE_VIEW_PER_MIN", "90"))  # bir işletmenin dakikada bakabileceği kurye araç profili sayısı
+
 
 @asynccontextmanager
 async def lifespan(_app):
     relay_router.start_cleaner()  # ulaşmayan mesajları arka planda siler (Render ücretsizde zamanlanmış iş yok)
     threading.Thread(target=handoff_router.loop, name="handoff-purge", daemon=True).start()  # süresi dolan teslim bağlantılarını siler
+    follow_router.start_cleaner()  # süresi dolan takipleri kapatır, eski konum noktalarını siler
     threading.Thread(target=_housekeeping_loop, name="housekeeping", daemon=True).start()
     yield
 
@@ -102,7 +114,7 @@ def _housekeeping_loop():
             print("[temizlik] hata:", type(e).__name__, flush=True)
 
 
-app = FastAPI(title="Rota Asistan", version="1.5.0", lifespan=lifespan)
+app = FastAPI(title="Rota Asistan", version="1.6.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -118,6 +130,14 @@ PUBLIC_BASE = os.getenv("PUBLIC_BASE", "").rstrip("/")
 async def _blocked_handler(_request: Request, exc: AccountBlocked):
     """Askıya alınmış hesap: uygulama `code: banned` görünce oturumu kapatır ve nedeni gösterir."""
     return JSONResponse(status_code=403, content={"detail": exc.detail, "code": exc.code, "reason": exc.reason})
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_handler(_request: Request, exc: RequestValidationError):
+    """422: hangi alanın neden reddedildiği döner; gönderilen DEĞER geri yazılmaz (şifre vb. yankılanmaz). Ayrıca NaN gibi JSON'a
+    sığmayan değerler yanıtı çökertmez (varsayılan işleyici girdiyi olduğu gibi geri yazar)."""
+    items = [{"loc": [x for x in e.get("loc", ()) if isinstance(x, (str, int))], "msg": str(e.get("msg", "")), "type": str(e.get("type", ""))} for e in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": items})
 
 
 @app.exception_handler(PasswordChangeRequired)
@@ -150,6 +170,10 @@ app.include_router(doors_router)
 handoff_router = make_handoff_router(doors_router.add_recipient_pin, HANDOFF_TTL_HOURS, HANDOFF_DAILY_MAX, HANDOFF_REVIEW_HOURS)
 app.include_router(handoff_router)
 app.include_router(make_reviews_router())
+follow_router = make_follow_router(FOLLOW_ASK_MIN, FOLLOW_MAX_HOURS, FOLLOW_KEEP_HOURS, FOLLOW_STALE_MIN, FOLLOW_COOLDOWN_MIN)
+app.include_router(follow_router)
+vehicle_router = make_vehicle_router(VEHICLE_VIEW_PER_MIN)
+app.include_router(vehicle_router)
 errors_router = make_errors_router(ERROR_KEEP_DAYS, ERROR_MAX_ROWS, ERROR_DAILY_MAX)
 app.include_router(errors_router)
 admin_router = make_admin_router(ERROR_KEEP_DAYS)
@@ -222,8 +246,8 @@ class ProfileIn(BaseModel):
 
 
 class LocIn(BaseModel):
-    lat: float
-    lon: float
+    lat: float = Field(ge=-90, le=90)  # NaN / Infinity / alan dışı değer kabul edilmez (yanıtı ve veritabanını bozmasın)
+    lon: float = Field(ge=-180, le=180)
 
 
 class PasswordIn(BaseModel):
@@ -242,16 +266,16 @@ class PkgIn(BaseModel):
     door_number: str = ""
     apartment: str = ""
     floor: str = ""
-    lat: float
-    lon: float
+    lat: float = Field(ge=-90, le=90)  # NaN / Infinity / alan dışı değer kabul edilmez (yanıtı ve veritabanını bozmasın)
+    lon: float = Field(ge=-180, le=180)
     precision: str = ""
 
 
 class JobIn(BaseModel):
     title: str = "Teslimat işi"
     note: str = ""
-    lat: float
-    lon: float
+    lat: float = Field(ge=-90, le=90)  # NaN / Infinity / alan dışı değer kabul edilmez (yanıtı ve veritabanını bozmasın)
+    lon: float = Field(ge=-180, le=180)
     # Yeni akışta adresler GÖNDERİLMEZ: yalnız sayı + bölge. (Eski istemci packages gönderirse saklanmaz, yalnız sayılır.)
     package_count: int = Field(default=0, ge=0, le=500, alias="packageCount")
     area: str = Field(default="", max_length=160)
@@ -269,6 +293,9 @@ class ConsentIn(BaseModel):
     ocr: bool = False
     grup_konum: bool = Field(default=False, alias="grupKonum")
     kapi: bool = False  # ortak kapı noktası katmanına katkı
+    # Araç profilimi işletmeler görsün (AYRI açık rıza; araç ekranında verilir / geri çekilir).
+    # Alan yoksa (eski istemci, ya da bu cihaz araç kararı vermedi) ÖNCEKİ karar korunur: başka cihazdaki seçimi sessizce bozmaz.
+    arac: bool | None = None
     aydinlatma_at: int = Field(default=0, ge=0, le=4102444800000, alias="aydinlatmaAt")
     acik_riza_at: int = Field(default=0, ge=0, le=4102444800000, alias="acikRizaAt")
     # Kullanım koşulları onayı (eski istemci göndermez → 0)
@@ -280,8 +307,8 @@ class ConsentIn(BaseModel):
 
 class PinIn(BaseModel):
     phone: str
-    lat: float
-    lon: float
+    lat: float = Field(ge=-90, le=90)  # NaN / Infinity / alan dışı değer kabul edilmez (yanıtı ve veritabanını bozmasın)
+    lon: float = Field(ge=-180, le=180)
 
 
 def user_out(u: User) -> dict:
@@ -300,13 +327,14 @@ def user_out(u: User) -> dict:
 
 def consent_out(c: ConsentLog | None) -> dict:
     if c is None:  # hiç rıza kaydı yok
-        return {"version": 0, "voice": False, "ocr": False, "grupKonum": False, "kapi": False, "aydinlatmaAt": 0, "acikRizaAt": 0, "sozlesmeV": 0, "sozlesmeAt": 0, "recordedAt": None}
+        return {"version": 0, "voice": False, "ocr": False, "grupKonum": False, "kapi": False, "arac": False, "aydinlatmaAt": 0, "acikRizaAt": 0, "sozlesmeV": 0, "sozlesmeAt": 0, "recordedAt": None}
     return {
         "version": c.version,
         "voice": bool(c.voice),
         "ocr": bool(c.ocr),
         "grupKonum": bool(c.grup_konum),
         "kapi": bool(c.kapi),
+        "arac": bool(c.arac),
         "aydinlatmaAt": c.aydinlatma_ms or 0,
         "acikRizaAt": c.acik_riza_ms or 0,
         "sozlesmeV": c.sozlesme_version or 0,
@@ -542,6 +570,7 @@ def set_loc(body: LocIn, user: User = Depends(current_user), db: Session = Depen
 def save_consent(body: ConsentIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
     """Rıza ver / değiştir / geri çek. Her çağrı yeni satır ekler (geçmiş silinmez); aynı içerik tekrar gelirse eklenmez."""
     last = latest_consent(db, user.id)
+    arac = bool(last.arac) if (body.arac is None and last is not None) else bool(body.arac)
     same = (
         last is not None
         and last.version == body.version
@@ -549,6 +578,7 @@ def save_consent(body: ConsentIn, user: User = Depends(current_user), db: Sessio
         and bool(last.ocr) == body.ocr
         and bool(last.grup_konum) == body.grup_konum
         and bool(last.kapi) == body.kapi
+        and bool(last.arac) == arac
         and (last.acik_riza_ms or 0) == body.acik_riza_at
         and (last.sozlesme_version or 0) == body.sozlesme_version
     )
@@ -561,12 +591,15 @@ def save_consent(body: ConsentIn, user: User = Depends(current_user), db: Sessio
         ocr=body.ocr,
         grup_konum=body.grup_konum,
         kapi=body.kapi,
+        arac=arac,
         aydinlatma_ms=body.aydinlatma_at,
         acik_riza_ms=body.acik_riza_at,
         sozlesme_version=body.sozlesme_version,
         sozlesme_ms=body.sozlesme_at,
     )
     db.add(row)
+    if not arac:
+        vehicle_withdraw(db, user.id)  # araç profili rızası kapalı: sunucudaki profil de silinir (rıza ile aynı işlemde)
     db.commit()
     db.refresh(row)
     return consent_out(row)

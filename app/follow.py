@@ -1,0 +1,340 @@
+"""Takip ("Follow"): işveren, mesajlaştığı bir kuryeyi harita üzerinde canlı izler.
+
+Gizlilik kuralları (sunucu uygular; hepsi testli):
+- İZİN KURYEDEN gelir, HER SEFERİNDE: işveren istek gönderir (asked); kurye KABUL ETMEZSE hiçbir konum alınmaz. Kurye istediği an durdurur.
+- Konum GEÇMİŞİ TUTULMAZ: satırda yalnız SON nokta durur, yenisi gelince üstüne yazılır. Takip bitince (durdurma, ret, süre, men,
+  rol değişimi) ya da nokta FOLLOW_STALE_MIN (30 dk) dakikadan eskiyse nokta SİLİNİR.
+- Konumu yalnız bu takibin işvereni okur, yalnız takip sürerken. Yönetimin konum görme ucu yoktur; etkinlik akışına koordinat yazılmaz
+  (yalnız "istek / başladı / bitti (neden)").
+- Bir kuryenin aynı anda tek aktif takibi olur (bir iş, bir işletme). Bir işletme birden çok kuryeyi izleyebilir.
+- Takip en çok FOLLOW_MAX_HOURS (12 saat) sürer; dolunca kapanır, yeniden izin gerekir. Konum yalnız kuryenin uygulaması AÇIKKEN gelir
+  (arka plan konumu yok); uygulama kapanınca nokta yaşlanır ve 30 dakika sonra silinir.
+- Kurye ilerlemesi (bitirilen / başarısız durak KİMLİKLERİ ve toplam) adres içermez; kimlikler telefonun ürettiği rastgele kodlardır.
+- Reddedilen istek FOLLOW_COOLDOWN_MIN (10 dk) içinde aynı işverenden yeniden gelmez; açık istek varken tekrar istek yeni satır açmaz.
+"""
+import json
+import re
+import threading
+import time
+from datetime import datetime, timedelta, timezone
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
+
+from . import events
+from .auth import current_user
+from .db import SessionLocal, get_db
+from .limits import Window
+from .models import Follow, User, now, uid
+
+ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,40}$")
+MAX_IDS = 500
+
+
+def _utc(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _iso(dt: datetime | None) -> str | None:
+    d = _utc(dt)
+    return d.isoformat() if d else None
+
+
+class RequestIn(BaseModel):
+    courier_id: str = Field(alias="courierId", min_length=1, max_length=40)
+
+    model_config = {"populate_by_name": True}
+
+
+class ProgressIn(BaseModel):
+    done: list[str] = Field(default_factory=list, max_length=MAX_IDS)
+    failed: list[str] = Field(default_factory=list, max_length=MAX_IDS)
+    total: int = Field(default=0, ge=0, le=1000)
+
+
+class PingIn(BaseModel):
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    acc: float | None = Field(default=None, ge=0, le=100000)
+    progress: ProgressIn | None = None
+
+
+class StopIn(BaseModel):
+    reason: str = Field(default="", max_length=12)  # "done": kurye bütün teslimatları bitirdi
+
+
+def _clean_progress(p: ProgressIn) -> dict:
+    def ok(xs: list[str]) -> list[str]:
+        return [x for x in dict.fromkeys(xs) if ID_RE.match(x)][:MAX_IDS]
+
+    return {"done": ok(p.done), "failed": ok(p.failed), "total": p.total}
+
+
+def _progress_of(f: Follow) -> dict:
+    try:
+        d = json.loads(f.progress or "{}")
+        if isinstance(d, dict) and isinstance(d.get("done"), list):
+            return {"done": d.get("done", []), "failed": d.get("failed", []), "total": int(d.get("total") or 0)}
+    except Exception:
+        pass
+    return {"done": [], "failed": [], "total": 0}
+
+
+def make_router(ask_min: float, max_hours: float, keep_hours: float, stale_min: float, cooldown_min: float) -> APIRouter:
+    r = APIRouter()
+    req_win = Window(30, 3600)  # işveren başına saatte en çok 30 yeni istek
+    ping_win = Window(40, 60)  # takip başına dakikada en çok 40 konum (uygulama 10–30 sn'de bir gönderir)
+
+    # ------------------------------------------------------------------ iç işler
+    def end(db: Session, f: Follow, reason: str, actor: str | None = None) -> None:
+        """Takibi kapatır ve konumu / ilerlemeyi SİLER. commit ETMEZ."""
+        if f.status == "ended":
+            return
+        was = f.status
+        f.status = "ended"
+        f.end_reason = reason
+        f.ended_at = now()
+        f.last_lat = f.last_lon = f.last_acc = None
+        f.last_at = None
+        f.progress = ""
+        # Bu satır tam bitirme anında yüklenmiş olabilir: o sırada başka bir istek yeni nokta yazdıysa, "zaten boş" sanılan alanlar
+        # güncellemeye girmez ve nokta kalır. Bu yüzden silinen alanlar HER ZAMAN yazılır.
+        for col in ("last_lat", "last_lon", "last_acc", "last_at", "progress"):
+            flag_modified(f, col)
+        events.log(db, "follow.end", actor, f.id, reason=reason, was=was)
+
+    def check(db: Session, f: Follow) -> bool:
+        """Açık (bekleyen / aktif) takip hâlâ geçerli mi? Geçersizse kapatır (commit çağırana ait). True: geçerli."""
+        if f.status not in ("asked", "active"):
+            return False
+        t = now()
+        if _utc(f.expires_at) < t:
+            end(db, f, "expired")
+            return False
+        courier = db.get(User, f.courier_id)
+        employer = db.get(User, f.employer_id)
+        if courier is None or courier.banned or employer is None or employer.banned:
+            end(db, f, "ban")
+            return False
+        if f.status == "active" and courier.active_role != "courier":  # kurye modundan çıktı: konum paylaşımı sona erer
+            end(db, f, "role")
+            return False
+        if f.status == "active" and f.last_at is not None and (t - _utc(f.last_at)) > timedelta(minutes=stale_min):
+            f.last_lat = f.last_lon = f.last_acc = None  # eski nokta silinir; takip sürer (kurye uygulamayı açınca yenisi gelir)
+            f.last_at = None
+        return True
+
+    def names_of(db: Session, rows: list[Follow]) -> dict[str, str]:
+        ids = {x for f in rows for x in (f.employer_id, f.courier_id)}
+        if not ids:
+            return {}
+        return {i: n for i, n in db.query(User.id, User.name).filter(User.id.in_(ids)).all()}
+
+    def out(f: Follow, viewer_id: str, names: dict[str, str]) -> dict:
+        side = "employer" if f.employer_id == viewer_id else "courier"
+        peer_id = f.courier_id if side == "employer" else f.employer_id
+        o = {
+            "id": f.id,
+            "side": side,
+            "status": f.status,
+            "endReason": f.end_reason or "",
+            "peer": {"id": peer_id, "name": names.get(peer_id, "")},
+            "createdAt": _iso(f.created_at),
+            "acceptedAt": _iso(f.accepted_at),
+            "endedAt": _iso(f.ended_at),
+            "expiresAt": _iso(f.expires_at),
+        }
+        if f.status == "active":
+            o["progress"] = _progress_of(f)
+            # Konumu YALNIZ işveren ve YALNIZ takip sürerken görür
+            if side == "employer" and f.last_lat is not None and f.last_lon is not None and f.last_at is not None:
+                age = (now() - _utc(f.last_at)).total_seconds()
+                if age <= stale_min * 60:
+                    o["location"] = {"lat": f.last_lat, "lon": f.last_lon, "acc": f.last_acc, "at": _iso(f.last_at), "ageSec": int(max(0, age))}
+        return o
+
+    def participant(db: Session, fid: str, user: User) -> Follow:
+        f = db.get(Follow, fid)
+        if f is None or user.id not in (f.employer_id, f.courier_id):
+            raise HTTPException(404, "Takip bulunamadı")  # başkasının takibinin varlığı açıklanmaz
+        return f
+
+    def view(db: Session, f: Follow, user: User, **extra) -> dict:
+        return {**out(f, user.id, names_of(db, [f])), **extra}
+
+    # ------------------------------------------------------------------ uçlar
+    @r.post("/v1/follow/request")
+    def request_follow(b: RequestIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        """İşveren, mesajlaştığı kuryeden takip izni ister. Kurye kabul edene kadar hiçbir konum alınmaz."""
+        if user.active_role != "employer":
+            raise HTTPException(403, "Takibi yalnız işveren başlatır")
+        if b.courier_id == user.id:
+            raise HTTPException(400, "Kendini takip edemezsin")
+        c = db.get(User, b.courier_id)
+        if c is None or c.banned:
+            raise HTTPException(404, "Kurye bulunamadı")
+        if c.active_role != "courier":
+            raise HTTPException(400, "Bu kişi şu an kurye modunda değil")
+        open_ = db.query(Follow).filter(Follow.employer_id == user.id, Follow.courier_id == c.id, Follow.status.in_(("asked", "active"))).first()
+        if open_ is not None and check(db, open_):  # aynı kurye için açık kayıt: yeni satır açılmaz
+            db.commit()
+            return view(db, open_, user, existing=True)
+        cut = now() - timedelta(minutes=cooldown_min)
+        if db.query(Follow.id).filter(Follow.employer_id == user.id, Follow.courier_id == c.id, Follow.end_reason == "declined", Follow.ended_at >= cut).first():
+            db.commit()
+            raise HTTPException(429, "Kurye isteği az önce reddetti; biraz sonra yeniden dene")
+        busy = db.query(Follow).filter(Follow.courier_id == c.id, Follow.status == "active").first()
+        if busy is not None and check(db, busy):
+            db.commit()
+            raise HTTPException(409, "Kurye şu an başka bir takipte; teslimatlarını bitirince yeni iş verebilirsin")
+        if not req_win.allow(user.id):
+            db.commit()
+            raise HTTPException(429, "Çok fazla takip isteği gönderdin; biraz bekle")
+        f = Follow(id=uid(), employer_id=user.id, courier_id=c.id, status="asked", expires_at=now() + timedelta(minutes=ask_min))
+        db.add(f)
+        events.log(db, "follow.ask", user.id, f.id, to=c.id)
+        try:
+            db.commit()
+        except IntegrityError:  # aynı anda başka istek açıldı
+            db.rollback()
+            raise HTTPException(409, "Bu kurye için zaten açık bir istek var")
+        return view(db, f, user, existing=False)
+
+    @r.get("/v1/follow/mine")
+    def mine(user: User = Depends(current_user), db: Session = Depends(get_db)):
+        """Benim takiplerim (işveren ya da kurye tarafı): bekleyen, aktif ve son 24 saatte biten. Konum yalnız işverene, yalnız aktifken."""
+        rows = (
+            db.query(Follow)
+            .filter(or_(Follow.employer_id == user.id, Follow.courier_id == user.id))
+            .order_by(Follow.created_at.desc())
+            .limit(60)
+            .all()
+        )
+        for f in rows:
+            if f.status in ("asked", "active"):
+                check(db, f)
+        db.commit()
+        names = names_of(db, rows)
+        return {"items": [out(f, user.id, names) for f in rows]}
+
+    @r.get("/v1/follow/{fid}")
+    def get_one(fid: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        f = participant(db, fid, user)
+        check(db, f)
+        db.commit()
+        return view(db, f, user)
+
+    @r.post("/v1/follow/{fid}/accept")
+    def accept(fid: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        """Kurye izin verir: takip başlar. Başka bir takibi sürüyorsa önce onu durdurmalıdır."""
+        f = participant(db, fid, user)
+        if f.courier_id != user.id:
+            raise HTTPException(403, "Takibi yalnız kurye kabul eder")
+        if user.active_role != "courier":
+            raise HTTPException(403, "Takibi kurye modunda kabul edebilirsin")
+        if f.status == "active" and check(db, f):
+            db.commit()
+            return view(db, f, user)
+        if f.status != "asked" or not check(db, f):
+            db.commit()
+            raise HTTPException(410, "Bu takip isteği artık geçerli değil")
+        busy = db.query(Follow).filter(Follow.courier_id == user.id, Follow.status == "active", Follow.id != f.id).first()
+        if busy is not None and check(db, busy):
+            db.commit()
+            raise HTTPException(409, "Zaten başka bir takip sürüyor; önce onu durdur")
+        t = now()
+        f.status = "active"
+        f.accepted_at = t
+        f.expires_at = t + timedelta(hours=max_hours)
+        events.log(db, "follow.start", user.id, f.id)
+        try:
+            db.commit()
+        except IntegrityError:  # aynı anda başka takip aktif oldu
+            db.rollback()
+            raise HTTPException(409, "Zaten başka bir takip sürüyor; önce onu durdur")
+        return view(db, f, user)
+
+    @r.post("/v1/follow/{fid}/decline")
+    def decline(fid: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        f = participant(db, fid, user)
+        if f.courier_id != user.id:
+            raise HTTPException(403, "İsteği yalnız kurye reddeder")
+        if f.status == "asked":
+            end(db, f, "declined", user.id)
+        elif f.status == "active":
+            end(db, f, "stopped_courier", user.id)
+        db.commit()
+        return view(db, f, user)
+
+    @r.post("/v1/follow/{fid}/stop")
+    def stop(fid: str, b: StopIn | None = None, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        """İşveren de kurye de takibi her an bitirir. Kurye `reason: "done"` ile "bütün teslimatları bitirdim" der. Konum silinir."""
+        f = participant(db, fid, user)
+        if f.status in ("asked", "active"):
+            if user.id == f.employer_id:
+                end(db, f, "cancelled" if f.status == "asked" else "stopped_employer", user.id)
+            elif f.status == "asked":
+                end(db, f, "declined", user.id)
+            else:
+                end(db, f, "done" if (b and b.reason == "done") else "stopped_courier", user.id)
+            db.commit()
+        return view(db, f, user)
+
+    @r.post("/v1/follow/{fid}/ping")
+    def ping(fid: str, b: PingIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        """Kuryenin uygulaması (açıkken) son konumunu gönderir; önceki nokta silinip yenisi yazılır. Takip sürmüyorsa konum ALINMAZ."""
+        f = db.get(Follow, fid)
+        if f is None or f.courier_id != user.id:
+            raise HTTPException(404, "Takip bulunamadı")
+        if not check(db, f) or f.status != "active":
+            db.commit()
+            return {"ok": False, "status": f.status, "endReason": f.end_reason or ""}
+        if not ping_win.allow(f.id):
+            raise HTTPException(429, "Konum çok sık gönderiliyor")
+        vals: dict = {"last_lat": b.lat, "last_lon": b.lon, "last_acc": b.acc, "last_at": now()}
+        if b.progress is not None:
+            vals["progress"] = json.dumps(_clean_progress(b.progress), separators=(",", ":"))
+        # Yazma "takip hâlâ aktifse" koşuluyla TEK adımda yapılır: kontrol ile yazma arasında takip bitmişse (kurye "bitirdim" dedi,
+        # işveren durdurdu) nokta veritabanına HİÇ girmez. Koşul veritabanında değerlendirilir; iki istek aynı anda gelse de geçerlidir.
+        n = db.query(Follow).filter(Follow.id == f.id, Follow.status == "active").update(vals, synchronize_session=False)
+        db.commit()
+        if n == 0:
+            db.refresh(f)
+            return {"ok": False, "status": f.status, "endReason": f.end_reason or ""}
+        return {"ok": True, "status": "active", "expiresAt": _iso(f.expires_at)}
+
+    # ------------------------------------------------------------------ temizlik
+    def sweep(db: Session) -> int:
+        """Süresi dolan / men edilen / kurye modundan çıkan takipleri kapatır; eski noktaları siler; biten kayıtları saklama
+        süresinden (FOLLOW_KEEP_HOURS) sonra siler. Dönen: kapatılan + silinen sayısı."""
+        n = 0
+        for f in db.query(Follow).filter(Follow.status.in_(("asked", "active"))).all():
+            if not check(db, f):
+                n += 1
+        cut = now() - timedelta(hours=keep_hours)
+        n += db.query(Follow).filter(Follow.status == "ended", Follow.ended_at < cut).delete(synchronize_session=False)
+        db.commit()
+        return n
+
+    def loop():
+        while True:
+            time.sleep(300)
+            try:
+                db = SessionLocal()
+                try:
+                    sweep(db)
+                finally:
+                    db.close()
+            except Exception as e:  # temizlik hatası sunucuyu düşürmesin
+                print("[takip] temizlik hatası:", type(e).__name__, flush=True)
+
+    r.sweep = sweep  # type: ignore[attr-defined]
+    r.limiters = (req_win, ping_win)  # type: ignore[attr-defined]
+    r.start_cleaner = lambda: threading.Thread(target=loop, name="follow-sweep", daemon=True).start()  # type: ignore[attr-defined]
+    return r

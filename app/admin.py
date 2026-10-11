@@ -463,7 +463,7 @@ def make_router(keep_days_errors: float = 14) -> APIRouter:
         if last is not None:
             consent = {
                 "version": last.version, "voice": bool(last.voice), "ocr": bool(last.ocr), "grupKonum": bool(last.grup_konum),
-                "kapi": bool(last.kapi), "sozlesmeV": last.sozlesme_version or 0, "recordedAt": iso(last.created_at),
+                "kapi": bool(last.kapi), "arac": bool(last.arac), "sozlesmeV": last.sozlesme_version or 0, "recordedAt": iso(last.created_at),
             }
         jobs = db.query(Job).filter(Job.employer_id == u.id).order_by(Job.created_at.desc()).limit(10).all()
         devs = db.query(Device).filter(Device.user_id == u.id).order_by(Device.last_seen.desc()).limit(10).all()

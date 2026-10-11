@@ -25,6 +25,8 @@ KINDS = {
     "job.create": "İlan yayınladı",
     "job.close": "İlanı kaldırdı",
     "relay.send": "Mesaj gönderdi",
+    "vehicle.share": "Araç profilini işletmelere açtı",
+    "vehicle.unshare": "Araç profilini işletmelere kapattı",
     "handoff.create": "Teslim bağlantısı üretti",
     "handoff.arrived": "Hedefe ulaştı",
     "handoff.received": "Alıcı 'Paketimi aldım' dedi",
@@ -33,6 +35,9 @@ KINDS = {
     "door.report": "Kapı noktası bildirdi",
     "review.create": "Değerlendirme yazıldı",
     "review.hidden": "Değerlendirme gizlendi",
+    "follow.ask": "Takip isteği gönderdi",
+    "follow.start": "Takibi kabul etti",
+    "follow.end": "Takip bitti",
 }
 
 

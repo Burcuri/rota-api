@@ -53,6 +53,17 @@ def test_job_without_addresses_and_no_phone_leak():
     assert listed and "phone" not in listed[0]["employer"]
 
 
+def test_coordinates_must_be_real_numbers_in_range():
+    """NaN / sonsuz / alan dışı koordinat kabul edilmez: veritabanına girip ilan listesi yanıtını (JSON) çökertemez."""
+    emp, _ = user("employer")
+    h = {**auth(emp), "Content-Type": "application/json"}
+    for bad in ('{"lat": NaN, "lon": 32}', '{"lat": 36.5, "lon": Infinity}', '{"lat": 91, "lon": 32}', '{"lat": 36.5, "lon": -181}'):
+        assert client.post("/v1/me/location", content=bad, headers=h).status_code == 422, bad
+        assert client.post("/v1/jobs", content=bad[:-1] + ', "packageCount": 1}', headers=h).status_code == 422, bad
+    assert client.get("/v1/jobs/open", headers=auth(emp)).status_code == 200  # liste hâlâ sağlam
+    assert client.post("/v1/me/location", json={"lat": 0, "lon": 0}, headers=auth(emp)).status_code == 200
+
+
 def test_old_client_packages_are_counted_not_stored():
     emp, _ = user("employer")
     pk = [{"customer": "Ayşe", "phone": phone(), "address": "Gül Sk. 9", "lat": 36.5, "lon": 32.0}] * 2
