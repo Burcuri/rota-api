@@ -1,3 +1,8 @@
+ Render ücretsiz servisi 15 dakika istek almazsa uyur; ilk istek ~1 dakika sürer.
+# Bu iş her 10 dakikada bir /health ucunu çağırarak servisi uyanık tutar.
+# Saatler UTC: 04:00–21:50 UTC = Türkiye 07:00–00:50 (gece uyumasına izin verilir; ücretsiz aylık saat hakkını korur).
+# Depo herkese açıksa GitHub Actions dakikaları ücretsizdir; özelse ayda 2000 dakika sınırı vardır ve bu iş onu aşar (GUNCELLEME_ADIMLARI.md › "Sunucuyu uyanık tut").
+# Adresi değiştirmek için: depo → Settings → Secrets and variables → Actions → Variables → SERVER_URL
 name: keepalive
 on:
   schedule:
@@ -19,5 +24,5 @@ jobs:
             if [ "$code" = "200" ]; then exit 0; fi
             sleep 20
           done
-          echo "Sunucu yanıt vermedi; sonraki turda tekrar denenecek."
+          echo "Sunucu yanıt vermedi (Render uyanıyor olabilir); sonraki turda tekrar denenecek."
           exit 0
