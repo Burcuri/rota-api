@@ -63,9 +63,16 @@ label.f input,label.f select,label.f textarea{display:block;width:100%;margin-to
 .rv p{margin:6px 0;word-break:break-word}
 .ev{display:grid;grid-template-columns:150px 1fr;gap:2px 12px;padding:7px 0;border-bottom:1px solid var(--line)}
 .ev .t{color:var(--muted);font-size:13.5px}
+.ev .addr{font-weight:700}
 .big{font-size:26px;font-weight:900;letter-spacing:1px;font-family:ui-monospace,Menlo,Consolas,monospace;word-break:break-all}
 .qr{display:block;width:200px;height:200px;image-rendering:pixelated;background:#fff;padding:8px;border-radius:10px;margin:8px 0}
 pre{white-space:pre-wrap;word-break:break-word;background:var(--card);padding:8px;border-radius:8px;font-size:12.5px;margin:8px 0 0}
+.trail{display:block;width:100%;max-width:640px;height:auto;border:2px solid var(--line);border-radius:12px;background:var(--card);margin:8px 0}
+.trail .line{fill:none;stroke:var(--accent);stroke-width:3;stroke-linejoin:round;stroke-linecap:round}
+.trail .s{fill:var(--ok)} .trail .e{fill:var(--bad)}
+.dot{display:inline-block;width:11px;height:11px;border-radius:50%;vertical-align:middle}
+.dot.s{background:var(--ok)} .dot.e{background:var(--bad)}
+.pts{max-height:260px;overflow:auto}
 details{margin:8px 0}
 summary{cursor:pointer;font-weight:800}
 .login{max-width:420px;margin:24px auto}

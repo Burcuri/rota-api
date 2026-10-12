@@ -336,9 +336,10 @@ class Review(Base):
 class Follow(Base):
     """Takip ("Follow"): işveren, mesajlaştığı bir kuryeyi harita üzerinde canlı izler. İzin KURYEDEN gelir, her seferinde:
     işveren istek gönderir (asked), kurye kabul edince (active) konumunu paylaşmaya başlar; kurye istediği an durdurabilir.
-    KONUM GEÇMİŞİ TUTULMAZ: satırda yalnız SON nokta durur, yenisi gelince üstüne yazılır; takip bitince (ended) ya da nokta
-    30 dakikadan eskiyse SİLİNİR. Konumu yalnız bu takibin işvereni okur, yalnız takip sürerken. Etkinlik akışına koordinat yazılmaz.
-    Biten satır (konumsuz) FOLLOW_KEEP_HOURS (24 saat) sonra silinir. Bir kuryenin aynı anda tek aktif takibi olur."""
+    Satırda iki şey durur: (1) CANLI nokta (last_*): yenisi gelince üstüne yazılır, takip bitince ya da 30 dakikadan eskiyse silinir;
+    (2) İZ (follow_points): seyreltilmiş geçmiş noktalar + son ilerleme, takip bittikten sonra FOLLOW_KEEP_HOURS (48 saat) boyunca
+    işveren, kurye ve yönetim tarafından görülebilir (şikayet / itiraz durumunda "son yapılan işler" kaydı), sonra satırla birlikte silinir.
+    Etkinlik akışına koordinat yazılmaz. Bir kuryenin aynı anda tek aktif takibi olur."""
 
     __tablename__ = "follows"
     id = Column(String(32), primary_key=True, default=uid)
@@ -351,13 +352,18 @@ class Follow(Base):
     accepted_at = Column(DateTime(timezone=True))
     ended_at = Column(DateTime(timezone=True), index=True)
     expires_at = Column(DateTime(timezone=True), nullable=False, index=True)  # istek: yanıt süresi; aktif: en uzun takip süresi
-    # Son nokta (geçmiş yok). Takip bitince hepsi NULL
+    # CANLI nokta: yalnız sonuncusu (üstüne yazılır). Takip bitince hepsi NULL. Seyreltilmiş iz ayrı tabloda (follow_points) 48 saat saklanır.
     last_lat = Column(Float)
     last_lon = Column(Float)
     last_acc = Column(Float)
     last_at = Column(DateTime(timezone=True))
-    # Kuryenin ilerlemesi: bitirilen / başarısız durakların kimlikleri (telefonun ürettiği rastgele kimlikler; ADRES YOK) ve toplam
+    # Kuryenin ilerlemesi: bitirilen / başarısız durakların kimlikleri (telefonun ürettiği rastgele kodlar), toplam, her kimliğin sunucuda ilk
+    # görüldüğü an ("t": {kimlik: saniye}) ve her biten durak için KISA ADRES ETİKETİ ("a": {kimlik: "Sokak No:N · Mahalle"}; müşteri adı /
+    # telefon / daire / kat YOK). Takip bitince de 48 saat saklanır.
     progress = Column(Text, nullable=False, default="")
+    # İz seyreltme: son kaydedilen iz noktasının zamanı ve kayıtlı nokta sayısı
+    trail_at = Column(DateTime(timezone=True))
+    trail_n = Column(Integer, default=0)
 
     __table_args__ = (
         # Bir kuryenin aynı anda tek aktif takibi (iki işletme aynı kuryeyi aynı anda izleyemez)
@@ -365,6 +371,18 @@ class Follow(Base):
         # Aynı işveren-kurye çifti için tek açık (bekleyen / aktif) kayıt: tekrarlanan istek yeni satır açmaz
         Index("uq_follow_open_pair", "employer_id", "courier_id", unique=True, sqlite_where=text("status IN ('asked','active')"), postgresql_where=text("status IN ('asked','active')")),
     )
+
+
+class FollowPoint(Base):
+    """Takip izi: kuryenin takip sürerken paylaştığı konumlardan seyreltilmiş (en sık ~15 sn'de bir) geçmiş noktalar.
+    Yalnız takip AKTİFKEN yazılır; takip satırıyla birlikte (bitişten FOLLOW_KEEP_HOURS sonra) silinir."""
+
+    __tablename__ = "follow_points"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    follow_id = Column(String(32), ForeignKey("follows.id"), nullable=False, index=True)
+    at = Column(DateTime(timezone=True), nullable=False, default=now)
+    lat = Column(Float, nullable=False)
+    lon = Column(Float, nullable=False)
 
 
 class CourierProfile(Base):

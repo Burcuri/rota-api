@@ -4,8 +4,11 @@ Giriş: yönetici adı + şifre (+ isteğe bağlı iki adımlı doğrulama / TOT
 kullanıcılarından AYRIDIR; uygulamada yönetici girişi yoktur. İlk yönetici (ve unutulan şifrenin kurtarılması) Render ortamındaki
 ADMIN_KEY ile yapılır: anahtar yalnız kurulum / kurtarma içindir, günlük işlerde kullanılmaz.
 
-Yönetimin GÖREMEYECEKLERİ (tasarım gereği sunucuda yoktur): mesaj içerikleri, adres listeleri, alıcı adı / telefonu.
-Her yönetici işlemi `admin_audit` tablosuna yazılır (şifre / kod gibi gizli değerler hariç; telefon ve e-posta maskeli).
+Yönetim sunucudaki kayıtların hepsine bakabilir: üyeler, etkinlikler, değerlendirmeler, hata özeti ve takip kayıtları (son 48 saatin
+takipleri, konum izi ve son ilerleme dahil). Mesaj içerikleri, adres listeleri ve alıcı adı / telefonu sunucuda TUTULMADIĞI (telefonlarda
+kalır) için panelde de yoktur.
+Her yönetici işlemi `admin_audit` tablosuna yazılır (şifre / kod gibi gizli değerler hariç; telefon ve e-posta maskeli). Bir takibin konum
+izini açmak da kayda geçer.
 """
 import base64
 import hashlib
@@ -29,8 +32,9 @@ from . import events, reviews as rv
 from .auth import ALGO, DUMMY_HASH, SECRET, check_pw, hash_pw, norm_email, norm_phone, norm_username
 from .db import get_db
 from .errors import summarize as errors_summary
+from .follow import trail_of
 from .limits import Window, client_ip
-from .models import Admin, AdminAudit, ConsentLog, Device, DoorPoint, Event, Handoff, Job, Review, User, now
+from .models import Admin, AdminAudit, ConsentLog, Device, DoorPoint, Event, Follow, Handoff, Job, Review, User, now
 
 ROLES = ("courier", "employer", "sponsor")
 ADMIN_TOKEN_HOURS = 12
@@ -200,7 +204,7 @@ class HideIn(BaseModel):
     note: str = Field(default="", max_length=200)
 
 
-def make_router(keep_days_errors: float = 14) -> APIRouter:
+def make_router(keep_days_errors: float = 14, follow_keep_hours: float = 48) -> APIRouter:
     r = APIRouter()
     login_ip = Window(30, 900)  # IP başı 15 dakikada 30 yanlış deneme (X-Forwarded-For taklit edilebilir; asıl koruma kullanıcı sınırı)
     login_user = Window(8, 900)  # yönetici adı başı 15 dakikada 8 yanlış deneme
@@ -690,6 +694,61 @@ def make_router(keep_days_errors: float = 14) -> APIRouter:
         db.delete(x)
         db.commit()
         return {"ok": True}
+
+    # ------------------------------------------------------------------ takipler (son 48 saat: iz + son ilerleme)
+    def follow_row(f: Follow, names: dict[str, str]) -> dict:
+        try:
+            pr = json.loads(f.progress) if f.progress else {}
+        except Exception:
+            pr = {}
+        pr = pr if isinstance(pr, dict) else {}
+        return {
+            "id": f.id, "status": f.status, "endReason": f.end_reason or "",
+            "employer": {"id": f.employer_id, "name": names.get(f.employer_id, "")},
+            "courier": {"id": f.courier_id, "name": names.get(f.courier_id, "")},
+            "createdAt": iso(f.created_at), "acceptedAt": iso(f.accepted_at), "endedAt": iso(f.ended_at),
+            "done": len(pr.get("done") or []), "failed": len(pr.get("failed") or []), "total": int(pr.get("total") or 0),
+            "trailN": int(f.trail_n or 0),
+        }
+
+    @r.get("/v1/admin/follows")
+    def follow_list(
+        status: str = "", user_id: str = "", before: str = "", limit: int = Query(default=60, ge=1, le=200),
+        a: Admin = Depends(current_admin), db: Session = Depends(get_db),
+    ):
+        """Takip kayıtları (bekleyen, aktif ve bitişinden sonra 48 saat içindekiler). Listede konum yoktur."""
+        qs = db.query(Follow)
+        if status in ("asked", "active", "ended"):
+            qs = qs.filter(Follow.status == status)
+        if user_id:
+            qs = qs.filter(or_(Follow.employer_id == user_id, Follow.courier_id == user_id))
+        b = parse_before(before)
+        if b is not None:
+            qs = qs.filter(Follow.created_at < b)
+        rows = qs.order_by(Follow.created_at.desc()).limit(limit).all()
+        names = names_of(db, {x for f in rows for x in (f.employer_id, f.courier_id)})
+        return {"items": [follow_row(f, names) for f in rows], "keepHours": follow_keep_hours}
+
+    @r.get("/v1/admin/follows/{fid}")
+    def follow_detail(fid: str, request: Request, a: Admin = Depends(current_admin), db: Session = Depends(get_db)):
+        """Bir takibin ayrıntısı: kimler, ne zaman, hangi durak ne zaman bitti ve konum izi. Konum izini açmak işlem günlüğüne yazılır."""
+        f = db.get(Follow, fid)
+        if f is None:
+            raise HTTPException(404, "Takip kaydı yok (biten kayıtlar 48 saat sonra silinir)")
+        names = names_of(db, {f.employer_id, f.courier_id})
+        try:
+            pr = json.loads(f.progress) if f.progress else {}
+        except Exception:
+            pr = {}
+        pr = pr if isinstance(pr, dict) else {}
+        t = pr.get("t") if isinstance(pr.get("t"), dict) else {}
+        lab = pr.get("a") if isinstance(pr.get("a"), dict) else {}
+        def stops(key: str) -> list[dict]:
+            return sorted(({"id": i, "at": int(t.get(i) or 0), "label": str(lab.get(i) or "")} for i in (pr.get(key) or [])), key=lambda x: x["at"])
+        pts = trail_of(db, f.id)
+        audit(db, request, a, "follow_view", "follow", f.id, f"{len(pts)} iz noktası")
+        db.commit()
+        return {**follow_row(f, names), "doneStops": stops("done"), "failedStops": stops("failed"), "points": pts}
 
     # ------------------------------------------------------------------ işlem günlüğü
     @r.get("/v1/admin/audit")

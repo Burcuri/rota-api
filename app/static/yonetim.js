@@ -11,8 +11,14 @@
     admin_create: 'Yönetici hesabı oluşturdu', admin_reset: 'Yönetici şifresini anahtarla sıfırladı', admin_disable: 'Yöneticiyi kapattı', admin_enable: 'Yöneticiyi yeniden açtı',
     user_edit: 'Üye bilgilerini düzenledi', user_ban: 'Üyeyi uygulamadan men etti', user_unban: 'Üyenin menini kaldırdı', user_password: 'Üyeye yeni şifre verdi', user_logout: 'Üyenin oturumlarını kapattı',
     review_hide: 'Değerlendirmeyi gizledi', review_unhide: 'Değerlendirmeyi yeniden gösterdi', review_delete: 'Değerlendirmeyi kalıcı sildi',
+    follow_view: 'Takip kaydının konum izini açtı',
   };
-  const TARGET = { user: 'üye', admin: 'yönetici', review: 'değerlendirme' };
+  const TARGET = { user: 'üye', admin: 'yönetici', review: 'değerlendirme', follow: 'takip' };
+  const FSTATUS = { asked: 'Yanıt bekliyor', active: 'Sürüyor', ended: 'Bitti' };
+  const FREASON = {
+    declined: 'kurye reddetti', cancelled: 'işveren vazgeçti', stopped_employer: 'işveren bitirdi', stopped_courier: 'kurye durdurdu',
+    done: 'kurye bütün teslimatları bitirdi', expired: 'süre doldu', role: 'kurye, kurye modundan çıktı', ban: 'hesap askıya alındı',
+  };
   const root = document.getElementById('root');
   let token = '';
   try { token = sessionStorage.getItem(KEY) || ''; } catch (e) { /* özel pencere */ }
@@ -20,6 +26,7 @@
   const uv = { q: '', role: '', banned: '', sort: 'new', items: [], total: 0 };
   const ev = { kind: '', userId: '' };
   const rv = { source: '', stars: '', hidden: '', q: '', subject: '' };
+  const fl = { status: '', userId: '' };
 
   // ------------------------------------------------------------------ yardımcılar
   function add(n, c) {
@@ -147,7 +154,7 @@
   }
 
   // ------------------------------------------------------------------ uygulama kabuğu
-  const TABS = [['ozet', 'Özet'], ['uyeler', 'Üyeler'], ['etkinlik', 'Etkinlik'], ['yorumlar', 'Yorumlar'], ['hatalar', 'Hatalar'], ['hesap', 'Hesabım']];
+  const TABS = [['ozet', 'Özet'], ['uyeler', 'Üyeler'], ['etkinlik', 'Etkinlik'], ['takipler', 'Takipler'], ['yorumlar', 'Yorumlar'], ['hatalar', 'Hatalar'], ['hesap', 'Hesabım']];
 
   function showApp() {
     document.getElementById('who').hidden = false;
@@ -169,7 +176,7 @@
     ctx.tab = tab;
     Array.prototype.forEach.call(document.querySelectorAll('.tab'), (b) => b.setAttribute('aria-selected', b.getAttribute('data-tab') === tab ? 'true' : 'false'));
     clear(ctx.content);
-    ({ ozet: tabOzet, uyeler: tabUyeler, etkinlik: tabEtkinlik, yorumlar: tabYorumlar, hatalar: tabHatalar, hesap: tabHesap })[tab]();
+    ({ ozet: tabOzet, uyeler: tabUyeler, etkinlik: tabEtkinlik, takipler: tabTakipler, yorumlar: tabYorumlar, hatalar: tabHatalar, hesap: tabHesap })[tab]();
   }
 
   function loading(node) { clear(node); node.appendChild(h('p', { class: 'muted', text: 'Yükleniyor…' })); }
@@ -196,7 +203,7 @@
         stat(s.reviews, 'Değerlendirme', () => go('yorumlar')),
         stat(s.reviewsHidden, 'Gizlenmiş değerlendirme', () => { Object.assign(rv, { hidden: '1' }); go('yorumlar'); }),
         stat(s.admins, 'Yönetici')));
-      c.appendChild(h('p', { class: 'small muted', text: 'Mesaj içerikleri, adres listeleri ve alıcı bilgileri sunucuda tutulmadığı için burada görünmez.' }));
+      c.appendChild(h('p', { class: 'small muted', text: 'Sunucudaki kayıtların hepsine buradan bakılır. Mesaj içerikleri, adres listeleri ve alıcı bilgileri telefonlarda durduğu, sunucuda tutulmadığı için burada yoktur.' }));
     }).catch((er) => failed(c, er));
   }
 
@@ -348,6 +355,7 @@
       case 'review.create': return (SRC[m.src] || m.src) + ' · ' + m.stars + '★';
       case 'user.banned': return m.reason ? 'neden: ' + m.reason + (m.by ? ' · ' + m.by : '') : (m.by || '');
       case 'user.edited': case 'user.unbanned': case 'user.reset': case 'review.hidden': return m.by ? 'yönetici: ' + m.by : '';
+      case 'follow.end': return FREASON[m.reason] || '';
       case 'user.register': case 'user.role': return ROLE[m.role] || '';
       case 'user.profile': return (m.fields || []).map((x) => FIELD[x] || x).join(', ');
       default: return '';
@@ -391,6 +399,119 @@
     c.appendChild(h('div', { class: 'row' }, kind, user, h('button', { type: 'button', class: 'btn', text: 'Göster', onclick: () => load(true) })));
     c.appendChild(info); c.appendChild(list); c.appendChild(h('div', { class: 'row' }, more));
     load(true);
+  }
+
+
+  // ------------------------------------------------------------------ Takipler (son 48 saat: iz + son ilerleme)
+  function dur(a, b) {
+    if (!a) return '';
+    const ms = (b ? new Date(b) : new Date()) - new Date(a);
+    if (!(ms >= 0)) return '';
+    const m = Math.round(ms / 60000);
+    return m < 90 ? m + ' dk' : Math.round(m / 6) / 10 + ' sa';
+  }
+  function followRow(f) {
+    const pill = f.status === 'active' ? 'pill ok' : f.status === 'asked' ? 'pill warn' : 'pill';
+    return h('button', { type: 'button', class: 'item', 'data-follow': f.id, onclick: () => openFollow(f.id) },
+      h('span', null, h('span', { class: 'nm', text: (f.employer.name || '(adsız)') + ' → ' + (f.courier.name || '(adsız)') }), ' ',
+        h('span', { class: pill, text: FSTATUS[f.status] || f.status }), ' ', f.status === 'ended' && FREASON[f.endReason] ? h('span', { class: 'muted small', text: FREASON[f.endReason] }) : null),
+      h('span', { class: 'muted small', text: [when(f.createdAt), f.total ? f.done + '/' + f.total + ' teslim' + (f.failed ? ', ' + f.failed + ' verilemedi' : '') : '', f.trailN ? f.trailN + ' iz noktası' : 'iz yok'].filter(Boolean).join(' · ') }));
+  }
+
+  function tabTakipler() {
+    const c = ctx.content;
+    const status = h('select', { 'aria-label': 'Durum' }, h('option', { value: '', text: 'Tüm takipler' }), ...Object.keys(FSTATUS).map((k) => h('option', { value: k, text: FSTATUS[k], selected: fl.status === k })));
+    const user = h('input', { placeholder: 'Üye kimliği (isteğe bağlı)', value: fl.userId, 'aria-label': 'Üye kimliği', class: 'grow' });
+    const list = h('div', { id: 'flist' }); const info = h('div', { class: 'msg', role: 'status' });
+    const more = h('button', { type: 'button', class: 'btn ghost', text: 'Daha eski olanlar', hidden: true });
+    let last = '';
+    let seq = 0;
+    function load(reset) {
+      if (reset) { clear(list); last = ''; }
+      fl.status = status.value; fl.userId = user.value.trim();
+      const my = ++seq;
+      api('GET', '/v1/admin/follows?' + qs({ status: fl.status, user_id: fl.userId, before: last, limit: 60 })).then((r) => {
+        if (my !== seq) return;
+        r.items.forEach((f) => list.appendChild(followRow(f)));
+        if (r.items.length) last = r.items[r.items.length - 1].createdAt;
+        more.hidden = r.items.length < 60;
+        say(info, !list.firstChild ? 'Takip kaydı yok.' : '', '');
+      }).catch((er) => { if (my === seq) say(info, er.message, 'bad'); });
+    }
+    status.addEventListener('change', () => load(true));
+    user.addEventListener('keydown', (e) => { if (e.key === 'Enter') load(true); });
+    more.addEventListener('click', () => load(false));
+    c.appendChild(h('h2', { text: 'Takipler' }));
+    c.appendChild(h('p', { class: 'small muted', text: 'İşverenin kuryeyi haritada izlediği takipler. Biten takibin konum izi, teslim edilen adreslerin sokak adı + kapı numarası ve saatleri 48 saat saklanır, sonra silinir. Bir takibi açmak işlem günlüğüne yazılır.' }));
+    c.appendChild(h('div', { class: 'row' }, status, user, h('button', { type: 'button', class: 'btn', text: 'Göster', onclick: () => load(true) })));
+    c.appendChild(info); c.appendChild(list); c.appendChild(h('div', { class: 'row' }, more));
+    load(true);
+  }
+
+  /** Konum izini düz SVG çizgisi olarak çizer (harici harita yüklenmez). */
+  function trailSvg(points) {
+    const NS = 'http://www.w3.org/2000/svg';
+    const W = 600; const H = 340; const PAD = 22;
+    const el = (tag, attrs) => { const n = document.createElementNS(NS, tag); Object.keys(attrs).forEach((k) => n.setAttribute(k, attrs[k])); return n; };
+    const svg = el('svg', { viewBox: '0 0 ' + W + ' ' + H, class: 'trail', role: 'img', 'aria-label': 'Konum izi çizimi' });
+    if (!points.length) return svg;
+    const lats = points.map((p) => p[1]); const lons = points.map((p) => p[2]);
+    const minLat = Math.min.apply(null, lats); const maxLat = Math.max.apply(null, lats);
+    const minLon = Math.min.apply(null, lons); const maxLon = Math.max.apply(null, lons);
+    const k = Math.cos(((minLat + maxLat) / 2) * Math.PI / 180);
+    const w = Math.max((maxLon - minLon) * k, 1e-6); const hh = Math.max(maxLat - minLat, 1e-6);
+    const sc = Math.min((W - 2 * PAD) / w, (H - 2 * PAD) / hh);
+    const ox = (W - w * sc) / 2; const oy = (H - hh * sc) / 2;
+    const xy = (p) => [ox + (p[2] - minLon) * k * sc, H - oy - (p[1] - minLat) * sc];
+    const pts = points.map(xy);
+    if (pts.length > 1) svg.appendChild(el('polyline', { points: pts.map((q) => q[0].toFixed(1) + ',' + q[1].toFixed(1)).join(' '), class: 'line' }));
+    const a = pts[0]; const b = pts[pts.length - 1];
+    svg.appendChild(el('circle', { cx: a[0].toFixed(1), cy: a[1].toFixed(1), r: '6', class: 's' }));
+    svg.appendChild(el('circle', { cx: b[0].toFixed(1), cy: b[1].toFixed(1), r: '6', class: 'e' }));
+    return svg;
+  }
+
+  function extentText(points) {
+    if (points.length < 2) return '';
+    const lats = points.map((p) => p[1]); const lons = points.map((p) => p[2]);
+    const mLat = (Math.max.apply(null, lats) - Math.min.apply(null, lats)) * 111320;
+    const mLon = (Math.max.apply(null, lons) - Math.min.apply(null, lons)) * 111320 * Math.cos(((Math.max.apply(null, lats) + Math.min.apply(null, lats)) / 2) * Math.PI / 180);
+    const fmt = (m) => (m >= 1000 ? (m / 1000).toFixed(1) + ' km' : Math.round(m) + ' m');
+    return 'Kapsam: yaklaşık ' + fmt(mLon) + ' × ' + fmt(mLat);
+  }
+
+  function hhmm(sec) { try { return new Date(sec * 1000).toLocaleString('tr-TR'); } catch (e) { return String(sec); } }
+
+  function openFollow(id) {
+    const c = ctx.content; loading(c);
+    api('GET', '/v1/admin/follows/' + encodeURIComponent(id)).then((d) => {
+      clear(c);
+      c.appendChild(h('button', { type: 'button', class: 'btn small ghost', text: '‹ Listeye dön', onclick: () => go('takipler') }));
+      c.appendChild(h('h2', { text: (d.employer.name || '(adsız)') + ' → ' + (d.courier.name || '(adsız)') }));
+      c.appendChild(h('div', { class: 'row' }, h('span', { class: 'pill', text: FSTATUS[d.status] || d.status }), d.status === 'ended' && FREASON[d.endReason] ? h('span', { class: 'muted small', text: FREASON[d.endReason] }) : null,
+        h('span', { class: 'muted small', text: 'Takip kimliği: ' + d.id })));
+      c.appendChild(h('div', { class: 'box' }, h('h3', { text: 'Zamanlar' }), kv([
+        ['İstek', when(d.createdAt)], ['Kurye kabul etti', when(d.acceptedAt)], ['Bitti', d.endedAt ? when(d.endedAt) + (d.acceptedAt ? ' (' + dur(d.acceptedAt, d.endedAt) + ' sürdü)' : '') : '—'],
+        ['İşveren', h('button', { type: 'button', class: 'btn small ghost', text: d.employer.name || d.employer.id, onclick: () => openUser(d.employer.id) })],
+        ['Kurye', h('button', { type: 'button', class: 'btn small ghost', text: d.courier.name || d.courier.id, onclick: () => openUser(d.courier.id) })]])));
+      const stopLine = (s, mark) => h('div', { class: 'ev', 'data-stop': s.id }, h('span', { class: 't', text: s.at ? hhmm(s.at) : '—' }), h('span', null, mark + ' ', h('span', { class: 'addr', text: s.label || '(adres bilgisi gelmemiş)' }), ' ', h('span', { class: 'muted small', text: s.id })));
+      c.appendChild(h('div', { class: 'box', 'data-box': 'stops' }, h('h3', { text: 'Teslimatlar (adres ve saat; kuryenin telefonundan gelen son ilerleme)' }),
+        d.total ? h('p', { class: 'small', text: d.done + ' teslim edildi, ' + d.failed + ' verilemedi, toplam ' + d.total + ' durak' }) : h('p', { class: 'muted small', text: 'İlerleme bilgisi gelmemiş.' }),
+        d.doneStops.map((s) => stopLine(s, '✅')), d.failedStops.map((s) => stopLine(s, '❌')),
+        h('p', { class: 'small muted', text: 'Adres: yalnız sokak adı, kapı numarası ve mahalle (müşteri adı, telefon, daire yok). Durak kodları telefonun ürettiği rastgele kodlardır. Saatler sunucunun ilk gördüğü andır.' })));
+      const pts = d.points || [];
+      const first = pts[0]; const lastp = pts[pts.length - 1];
+      const osm = (p) => 'https://www.openstreetmap.org/?mlat=' + p[1] + '&mlon=' + p[2] + '#map=17/' + p[1] + '/' + p[2];
+      c.appendChild(h('div', { class: 'box', 'data-box': 'trail' }, h('h3', { text: 'Konum izi' }),
+        pts.length ? [
+          h('p', { class: 'small', text: pts.length + ' nokta · ' + hhmm(first[0]) + ' → ' + hhmm(lastp[0]) + (extentText(pts) ? ' · ' + extentText(pts) : '') }),
+          trailSvg(pts),
+          h('p', { class: 'small' }, h('span', { class: 'dot s' }), ' başlangıç  ', h('span', { class: 'dot e' }), ' son nokta   ',
+            h('a', { href: osm(first), target: '_blank', rel: 'noopener noreferrer', text: 'Başlangıcı haritada aç' }), '  ·  ', h('a', { href: osm(lastp), target: '_blank', rel: 'noopener noreferrer', text: 'Son noktayı haritada aç' })),
+          h('details', null, h('summary', { text: 'Nokta listesi' }), h('div', { class: 'pts' }, pts.map((p) => h('div', { class: 'ev' }, h('span', { class: 't', text: hhmm(p[0]) }), h('span', { text: p[1].toFixed(6) + ', ' + p[2].toFixed(6) }))))),
+        ] : h('p', { class: 'muted', text: 'Bu takipte iz noktası yok (kurye hiç konum paylaşmamış olabilir).' }),
+        h('p', { class: 'small muted', text: 'Bu kayıt takip bittikten 48 saat sonra silinir.' })));
+    }).catch((er) => failed(c, er));
   }
 
   // ------------------------------------------------------------------ Yorumlar

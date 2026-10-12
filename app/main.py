@@ -79,12 +79,14 @@ EVENT_MAX_ROWS = int(os.getenv("EVENT_MAX_ROWS", "50000"))
 REVIEW_KEEP_DAYS = float(os.getenv("REVIEW_KEEP_DAYS", "365"))  # değerlendirmeler (yorum metni dahil) bu kadar gün tutulur
 AUDIT_KEEP_DAYS = float(os.getenv("AUDIT_KEEP_DAYS", "365"))  # yönetici işlem günlüğü
 
-# Takip ("Follow": işverenin kuryeyi haritada canlı izlemesi; izin kuryeden, konum geçmişi tutulmaz)
+# Takip ("Follow": işverenin kuryeyi haritada canlı izlemesi; izin kuryeden; canlı konum bitince silinir, iz + son ilerleme 48 saat saklanır)
 FOLLOW_ASK_MIN = float(os.getenv("FOLLOW_ASK_MIN", "30"))  # kurye takip isteğine en çok bu kadar dakika içinde yanıt verir
 FOLLOW_MAX_HOURS = float(os.getenv("FOLLOW_MAX_HOURS", "12"))  # bir takip en çok bu kadar saat sürer (sonra yeniden izin gerekir)
-FOLLOW_KEEP_HOURS = float(os.getenv("FOLLOW_KEEP_HOURS", "24"))  # biten takip kaydı (konumsuz) bu kadar saat sonra silinir
+FOLLOW_KEEP_HOURS = float(os.getenv("FOLLOW_KEEP_HOURS", "48"))  # biten takip kaydı (iz + son ilerleme) bu kadar saat saklanır, sonra silinir
 FOLLOW_STALE_MIN = float(os.getenv("FOLLOW_STALE_MIN", "30"))  # bu kadar dakikadır güncellenmeyen konum silinir
 FOLLOW_COOLDOWN_MIN = float(os.getenv("FOLLOW_COOLDOWN_MIN", "10"))  # reddedilen isteğin aynı işverenden yeniden gelmesi için bekleme
+FOLLOW_TRAIL_SEC = float(os.getenv("FOLLOW_TRAIL_SEC", "15"))  # iz noktaları arasındaki en kısa süre (saniye)
+FOLLOW_TRAIL_MAX = int(os.getenv("FOLLOW_TRAIL_MAX", "4000"))  # bir takip için saklanan en çok iz noktası
 VEHICLE_VIEW_PER_MIN = int(os.getenv("VEHICLE_VIEW_PER_MIN", "90"))  # bir işletmenin dakikada bakabileceği kurye araç profili sayısı
 
 
@@ -114,7 +116,7 @@ def _housekeeping_loop():
             print("[temizlik] hata:", type(e).__name__, flush=True)
 
 
-app = FastAPI(title="Rota Asistan", version="1.6.0", lifespan=lifespan)
+app = FastAPI(title="Rota Asistan", version="1.7.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -170,13 +172,13 @@ app.include_router(doors_router)
 handoff_router = make_handoff_router(doors_router.add_recipient_pin, HANDOFF_TTL_HOURS, HANDOFF_DAILY_MAX, HANDOFF_REVIEW_HOURS)
 app.include_router(handoff_router)
 app.include_router(make_reviews_router())
-follow_router = make_follow_router(FOLLOW_ASK_MIN, FOLLOW_MAX_HOURS, FOLLOW_KEEP_HOURS, FOLLOW_STALE_MIN, FOLLOW_COOLDOWN_MIN)
+follow_router = make_follow_router(FOLLOW_ASK_MIN, FOLLOW_MAX_HOURS, FOLLOW_KEEP_HOURS, FOLLOW_STALE_MIN, FOLLOW_COOLDOWN_MIN, FOLLOW_TRAIL_SEC, FOLLOW_TRAIL_MAX)
 app.include_router(follow_router)
 vehicle_router = make_vehicle_router(VEHICLE_VIEW_PER_MIN)
 app.include_router(vehicle_router)
 errors_router = make_errors_router(ERROR_KEEP_DAYS, ERROR_MAX_ROWS, ERROR_DAILY_MAX)
 app.include_router(errors_router)
-admin_router = make_admin_router(ERROR_KEEP_DAYS)
+admin_router = make_admin_router(ERROR_KEEP_DAYS, FOLLOW_KEEP_HOURS)
 app.include_router(admin_router)
 app.include_router(make_web_router())  # /web: uygulamanın tarayıcı sürümü (web ikizi)
 

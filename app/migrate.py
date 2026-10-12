@@ -29,6 +29,9 @@ ADD_COLUMNS = [
     ("handoffs", "closed_at", "TIMESTAMP WITH TIME ZONE"),
     # Dilim 5: kurye araç profili için ayrı açık rıza
     ("consent_log", "arac", "BOOLEAN"),
+    # Dilim 6: takip izi (48 saat saklanan seyreltilmiş geçmiş noktalar)
+    ("follows", "trail_at", "TIMESTAMP WITH TIME ZONE"),
+    ("follows", "trail_n", "INTEGER DEFAULT 0"),
 ]
 
 # create_all'un yeni kurulumda açtığı dizin adlarıyla aynı adlar (ix_<tablo>_<sütun>)
