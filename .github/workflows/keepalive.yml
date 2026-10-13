@@ -1,4 +1,4 @@
- Render ücretsiz servisi 15 dakika istek almazsa uyur; ilk istek ~1 dakika sürer.
+# Render ücretsiz servisi 15 dakika istek almazsa uyur; ilk istek ~1 dakika sürer.
 # Bu iş her 10 dakikada bir /health ucunu çağırarak servisi uyanık tutar.
 # Saatler UTC: 04:00–21:50 UTC = Türkiye 07:00–00:50 (gece uyumasına izin verilir; ücretsiz aylık saat hakkını korur).
 # Depo herkese açıksa GitHub Actions dakikaları ücretsizdir; özelse ayda 2000 dakika sınırı vardır ve bu iş onu aşar (GUNCELLEME_ADIMLARI.md › "Sunucuyu uyanık tut").
