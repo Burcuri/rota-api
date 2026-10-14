@@ -116,7 +116,7 @@ def _housekeeping_loop():
             print("[temizlik] hata:", type(e).__name__, flush=True)
 
 
-app = FastAPI(title="Rota Asistan", version="1.7.0", lifespan=lifespan)
+app = FastAPI(title="Rota Asistan", version="1.8.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -558,6 +558,58 @@ def update_profile(body: ProfileIn, user: User = Depends(current_user), db: Sess
         raise HTTPException(400, "Bu kullanıcı adı alınmış, başka bir ad seç")
     db.refresh(user)
     return user_out(user)
+
+
+class FindableIn(BaseModel):
+    on: bool
+
+
+class MatchIn(BaseModel):
+    phones: list[str] = Field(min_length=1, max_length=1000)
+
+
+contact_match = Window(12, 3600)  # kullanıcı başı saatte 12 eşleştirme isteği (rehber taraması / numara deneme)
+contact_probe = Window(6000, 3600)  # kullanıcı başı saatte en çok 6000 numara sorgusu (toplam)
+
+
+@app.get("/v1/me/findable")
+def get_findable(user: User = Depends(current_user)):
+    return {"on": user.findable is not False}
+
+
+@app.post("/v1/me/findable")
+def set_findable(body: FindableIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    user.findable = bool(body.on)
+    events.log(db, "user.findable", user.id, on=bool(body.on))
+    db.commit()
+    return {"on": user.findable}
+
+
+@app.post("/v1/contacts/match")
+def contacts_match(body: MatchIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Rehberdeki / yazılan numaralardan hangileri ROTA üyesi? Numaralar SAKLANMAZ, günlüğe yazılmaz; yalnız eşleşenin
+    kimliği, adı ve rolü döner. "Bulunabilirim" kapalıysa ve yasaklıysa dönmez. Sıkı hız sınırı vardır (numara tarama kötüye kullanımı)."""
+    if not contact_match.allow(user.id):
+        raise HTTPException(429, "Çok sık arama yaptın, biraz sonra tekrar dene")
+    nums: list[str] = []
+    for raw in body.phones:
+        try:
+            n = norm_phone(raw)
+        except HTTPException:
+            continue
+        if n != user.phone and n not in nums:
+            nums.append(n)
+    if contact_probe.count(user.id) + len(nums) > 6000:
+        raise HTTPException(429, "Bu saat için arama sınırına ulaştın")
+    for _ in nums:
+        contact_probe.allow(user.id)
+    rows = db.query(User).filter(User.phone.in_(nums)).all() if nums else []
+    out = [
+        {"id": u.id, "name": u.name, "role": u.active_role, "phone": u.phone}
+        for u in rows
+        if u.findable is not False and not u.banned
+    ]
+    return {"matches": out, "checked": len(nums)}
 
 
 @app.post("/v1/me/location")

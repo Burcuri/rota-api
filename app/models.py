@@ -38,6 +38,8 @@ class User(Base):
     # Yönetim şifreyi sıfırladı: kullanıcı yeni şifre koyana kadar yalnız /v1/me ve /v1/me/password çalışır
     must_change_password = Column(Boolean, default=False)
     last_login_at = Column(DateTime(timezone=True))
+    # Dilim 10: rehberden / numaradan bulunabilirim. NULL = açık sayılır (varsayılan açık; Gizlilik'ten kapatılır)
+    findable = Column(Boolean, default=True)
 
     jobs_posted = relationship("Job", back_populates="employer", foreign_keys="Job.employer_id")
 

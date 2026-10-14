@@ -32,6 +32,8 @@ ADD_COLUMNS = [
     # Dilim 6: takip izi (48 saat saklanan seyreltilmiş geçmiş noktalar)
     ("follows", "trail_at", "TIMESTAMP WITH TIME ZONE"),
     ("follows", "trail_n", "INTEGER DEFAULT 0"),
+    # Dilim 10: rehberden bulunma
+    ("users", "findable", "BOOLEAN DEFAULT TRUE"),
 ]
 
 # create_all'un yeni kurulumda açtığı dizin adlarıyla aynı adlar (ix_<tablo>_<sütun>)
