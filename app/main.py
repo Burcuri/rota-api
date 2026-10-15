@@ -34,6 +34,7 @@ from .doors import make_router as make_doors_router
 from .admin import make_router as make_admin_router
 from .errors import make_router as make_errors_router
 from .follow import make_router as make_follow_router
+from .nearby import make_router as make_nearby_router
 from .vehicle import make_router as make_vehicle_router, withdraw as vehicle_withdraw
 from .handoff import make_router as make_handoff_router
 from .migrate import ensure_schema
@@ -80,6 +81,10 @@ REVIEW_KEEP_DAYS = float(os.getenv("REVIEW_KEEP_DAYS", "365"))  # değerlendirme
 AUDIT_KEEP_DAYS = float(os.getenv("AUDIT_KEEP_DAYS", "365"))  # yönetici işlem günlüğü
 
 # Takip ("Follow": işverenin kuryeyi haritada canlı izlemesi; izin kuryeden; canlı konum bitince silinir, iz + son ilerleme 48 saat saklanır)
+VISIBLE_MIN = int(os.getenv("VISIBLE_MIN", "10"))  # haritada görünen kullanıcının konumu bu kadar dakika taze sayılır
+NUDGE_HOURLY = int(os.getenv("NUDGE_HOURLY", "12"))  # kullanıcı başı saatte en çok selam
+NUDGE_PAIR_MIN = int(os.getenv("NUDGE_PAIR_MIN", "10"))  # aynı kişiye en sık bu kadar dakikada bir
+NUDGE_KEEP_HOURS = int(os.getenv("NUDGE_KEEP_HOURS", "48"))  # okunmayan selam bu kadar saat sonra silinir
 FOLLOW_ASK_MIN = float(os.getenv("FOLLOW_ASK_MIN", "30"))  # kurye takip isteğine en çok bu kadar dakika içinde yanıt verir
 FOLLOW_MAX_HOURS = float(os.getenv("FOLLOW_MAX_HOURS", "12"))  # bir takip en çok bu kadar saat sürer (sonra yeniden izin gerekir)
 FOLLOW_KEEP_HOURS = float(os.getenv("FOLLOW_KEEP_HOURS", "48"))  # biten takip kaydı (iz + son ilerleme) bu kadar saat saklanır, sonra silinir
@@ -116,7 +121,7 @@ def _housekeeping_loop():
             print("[temizlik] hata:", type(e).__name__, flush=True)
 
 
-app = FastAPI(title="Rota Asistan", version="1.8.0", lifespan=lifespan)
+app = FastAPI(title="Rota Asistan", version="1.10.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -174,6 +179,8 @@ app.include_router(handoff_router)
 app.include_router(make_reviews_router())
 follow_router = make_follow_router(FOLLOW_ASK_MIN, FOLLOW_MAX_HOURS, FOLLOW_KEEP_HOURS, FOLLOW_STALE_MIN, FOLLOW_COOLDOWN_MIN, FOLLOW_TRAIL_SEC, FOLLOW_TRAIL_MAX)
 app.include_router(follow_router)
+nearby_router = make_nearby_router(VISIBLE_MIN, NUDGE_HOURLY, NUDGE_PAIR_MIN, NUDGE_KEEP_HOURS)
+app.include_router(nearby_router)
 vehicle_router = make_vehicle_router(VEHICLE_VIEW_PER_MIN)
 app.include_router(vehicle_router)
 errors_router = make_errors_router(ERROR_KEEP_DAYS, ERROR_MAX_ROWS, ERROR_DAILY_MAX)
@@ -324,6 +331,7 @@ def user_out(u: User) -> dict:
         "lat": u.lat,
         "lon": u.lon,
         "mustChangePassword": bool(u.must_change_password),
+        "mapIcon": u.map_icon or "",
     }
 
 
@@ -570,6 +578,18 @@ class MatchIn(BaseModel):
 
 contact_match = Window(12, 3600)  # kullanıcı başı saatte 12 eşleştirme isteği (rehber taraması / numara deneme)
 contact_probe = Window(6000, 3600)  # kullanıcı başı saatte en çok 6000 numara sorgusu (toplam)
+
+
+class MapIconIn(BaseModel):
+    icon: str = Field(default="", max_length=24, pattern=r"^[a-z0-9_]*$")
+
+
+@app.post("/v1/me/map-icon")
+def set_map_icon(body: MapIconIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Haritada görünecek ikon kimliği (yalnız küçük harf/rakam/_; çizim uygulamadadır). Boş = kaldır."""
+    user.map_icon = body.icon or None
+    db.commit()
+    return {"icon": user.map_icon or ""}
 
 
 @app.get("/v1/me/findable")

@@ -44,3 +44,15 @@ def test_requires_login_and_rate_limit():
     a = mk("Gül")
     codes = [client.post("/v1/contacts/match", json={"phones": ["05381111111"]}, headers=a["h"]).status_code for _ in range(14)]
     assert codes[:12] == [200] * 12 and codes[12] == 429
+
+
+def test_map_icon_set_clear_and_validate():
+    a = mk("Hale")
+    assert client.get("/v1/me", headers=a["h"]).json()["mapIcon"] == ""
+    r = client.post("/v1/me/map-icon", json={"icon": "kedi"}, headers=a["h"])
+    assert r.status_code == 200 and r.json() == {"icon": "kedi"}
+    assert client.get("/v1/me", headers=a["h"]).json()["mapIcon"] == "kedi"
+    assert client.post("/v1/me/map-icon", json={"icon": "<script>"}, headers=a["h"]).status_code == 422
+    assert client.post("/v1/me/map-icon", json={"icon": "x" * 25}, headers=a["h"]).status_code == 422
+    assert client.post("/v1/me/map-icon", json={"icon": ""}, headers=a["h"]).json() == {"icon": ""}
+    assert client.post("/v1/me/map-icon", json={"icon": "kedi"}).status_code in (401, 403)

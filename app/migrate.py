@@ -34,6 +34,13 @@ ADD_COLUMNS = [
     ("follows", "trail_n", "INTEGER DEFAULT 0"),
     # Dilim 10: rehberden bulunma
     ("users", "findable", "BOOLEAN DEFAULT TRUE"),
+    # Dilim 11: harita ikonu
+    ("users", "map_icon", "VARCHAR(24)"),
+    # Dilim 12: haritada görünme
+    ("users", "visible_map", "BOOLEAN DEFAULT FALSE"),
+    ("users", "vis_lat", "FLOAT"),
+    ("users", "vis_lon", "FLOAT"),
+    ("users", "vis_at", "TIMESTAMP WITH TIME ZONE"),
 ]
 
 # create_all'un yeni kurulumda açtığı dizin adlarıyla aynı adlar (ix_<tablo>_<sütun>)

@@ -36,6 +36,10 @@ KINDS = {
     "review.create": "Değerlendirme yazıldı",
     "review.hidden": "Değerlendirme gizlendi",
     "follow.ask": "Takip isteği gönderdi",
+    "map.visible": "Haritada görünmeyi açtı",
+    "map.hidden": "Haritada görünmeyi kapattı",
+    "map.nudge": "Haritada selam gönderdi",
+    "map.block": "Birini engelledi",
     "follow.start": "Takibi kabul etti",
     "follow.end": "Takip bitti",
 }

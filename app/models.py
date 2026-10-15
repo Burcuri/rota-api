@@ -40,6 +40,13 @@ class User(Base):
     last_login_at = Column(DateTime(timezone=True))
     # Dilim 10: rehberden / numaradan bulunabilirim. NULL = açık sayılır (varsayılan açık; Gizlilik'ten kapatılır)
     findable = Column(Boolean, default=True)
+    # Dilim 11: haritada görünecek ikonun KIMLIĞI (çizim uygulamada; örn. "kedi"). Boş = seçilmedi
+    map_icon = Column(String(24))
+    # Dilim 12: haritada ROTA kullanıcılarına görünme (AYRI açık rıza; varsayılan KAPALI). Konum yalnız görünürken, yaklaşık, kısa süreli tutulur.
+    visible_map = Column(Boolean, default=False)
+    vis_lat = Column(Float)
+    vis_lon = Column(Float)
+    vis_at = Column(DateTime(timezone=True))
 
     jobs_posted = relationship("Job", back_populates="employer", foreign_keys="Job.employer_id")
 
@@ -400,3 +407,26 @@ class CourierProfile(Base):
     from_hhmm = Column(String(5), nullable=False, default="09:00")
     to_hhmm = Column(String(5), nullable=False, default="22:00")
     updated_at = Column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class MapBlock(Base):
+    """Engelleme: engelleyen engellenenin haritasında görünmez, engellenen onu göremez / ona dürtme gönderemez."""
+
+    __tablename__ = "map_blocks"
+    id = Column(String(32), primary_key=True, default=uid)
+    user_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    blocked_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), default=now)
+    __table_args__ = (UniqueConstraint("user_id", "blocked_id", name="uq_map_block"),)
+
+
+class Nudge(Base):
+    """Kısıtlı selam: serbest metin YOK; yalnız wave (el sallama) | nudge (dürtme) | hello ("Merhaba, ben de ROTA kullanıcısıyım").
+    Alıcı okuyunca ya da NUDGE_KEEP_HOURS sonra silinir."""
+
+    __tablename__ = "nudges"
+    id = Column(String(32), primary_key=True, default=uid)
+    from_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    to_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    kind = Column(String(8), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=now, index=True)
