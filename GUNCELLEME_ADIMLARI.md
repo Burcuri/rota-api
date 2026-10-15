@@ -1,3 +1,20 @@
+# Sunucu güncellemesi — Dilim 13 (15 Ekim 2026)
+
+**Bu zip'te sunucu kodu Dilim 12 ile aynıdır (sürüm 1.10.0); değişen yalnız `app/webapp/` (yeni web ikizi derlemesi, uygulama 0.12.0).**
+GitHub'daki depo hâlâ **Dilim 11**'de (`app/nearby.py` yok). Bu zip'i yüklemek Dilim 12'yi de (haritada görünme + kısıtlı selam) getirir.
+
+**Yapılacak:** zip'i aç → GitHub `Burcuri/rota-api` → önce depodaki `app/webapp` klasörünü sil (⋯ → *Delete directory*) → **Add file → Upload files** ile zip'in **içindekileri** yükle (`app/webapp` dahil) → Render'ın kurmasını bekle.
+**Beklenen log (Dilim 12'den, yalnız ilk açılışta):** `[şema] users.visible_map eklendi`, `users.vis_lat`, `users.vis_lon`, `users.vis_at`; yeni tablolar `map_blocks`, `nudges` sessizce açılır. Yeni Python paketi ve ortam değişkeni yok.
+
+## Dilim 13'te ne değişti (yalnız uygulama / web ikizi)
+- "Açık Rıza" sayfası → **"Ayarlar ve özellikler"**. Sesle yazma, adres okuma (kamera → OCR) ve grup konumu **isteğe bağlı**; hepsi kapalıyken de uygulamaya girilir. "Kabul etmiyorum" düğmesi ve "üçü de gerekir" yazıları kalktı; Gizlilik ve izinler'de anahtarı kapatmak **oturumu kapatmaz**.
+- Adres okuma açıklaması ayrıntılı: etiket fotoğrafı yurt dışındaki OCR.space'e gider; kapalıyken kamerayla etiket/adres okunmaz (barkod okunur); adres elle yazılarak uygulama kullanılır.
+- Rıza sürümü **7 → 8**: herkes koşullar + aydınlatma + ayarlar ekranını bir kez daha görür. Zorunluyken verilmiş (sürüm 7) seçimler önceden açık gösterilmez.
+- Sunucu rıza günlüğüne seçimler (açık ya da kapalı) yine yazılır; sunucuda kod değişikliği yok.
+- **Deneme:** `/web` → yeni hesap aç → "Ayarlar ve özellikler" sayfası çıkar; hepsini kapalı bırakıp **Kaydet ve devam** → uygulama açılır.
+
+---
+
 # Sunucu güncellemesi (Dilim 6: 48 saatlik teslimat kaydı · Dilim 5: Takip, araç profili) — adım adım
 
 Bu zip **önceki dilimlerin hepsini de içerir**; aynı adlı dosyaların üzerine yazılır. `SECRET_KEY` zaten ayarlı, yeniden yazmak gerekmez. Sunucu sürümü **1.7.0**. Yeni Python paketi yok.
