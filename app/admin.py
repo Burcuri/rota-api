@@ -420,7 +420,7 @@ def make_router(keep_days_errors: float = 14, follow_keep_hours: float = 48) -> 
     # ------------------------------------------------------------------ üyeler
     def user_row(u: User) -> dict:
         return {
-            "id": u.id, "name": u.name, "phone": u.phone, "username": u.username, "email": u.email, "role": u.active_role,
+            "id": u.id, "userNo": u.public_no or "", "name": u.name, "phone": u.phone, "username": u.username, "email": u.email, "role": u.active_role,
             "banned": bool(u.banned), "bannedReason": u.banned_reason or "", "bannedAt": iso(u.banned_at),
             "mustChangePassword": bool(u.must_change_password), "createdAt": iso(u.created_at), "lastLoginAt": iso(u.last_login_at),
         }
@@ -445,6 +445,8 @@ def make_router(keep_days_errors: float = 14, follow_keep_hours: float = 48) -> 
                      func.lower(User.email).like(like(q.lower()), escape="\\")]
             if len(digits) >= 4:
                 conds.append(User.phone.like(like(digits), escape="\\"))
+            if len(digits) == 7:  # kullanıcı no (KRY-8472019 / ISV-… / SPN-… / yalnız rakam)
+                conds.append(User.public_no == digits)
             if re.fullmatch(r"[0-9a-f]{6,32}", q.lower()):
                 conds.append(User.id.like(q.lower() + "%"))
             qs = qs.filter(or_(*conds))

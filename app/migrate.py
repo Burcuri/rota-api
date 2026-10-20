@@ -41,12 +41,15 @@ ADD_COLUMNS = [
     ("users", "vis_lat", "FLOAT"),
     ("users", "vis_lon", "FLOAT"),
     ("users", "vis_at", "TIMESTAMP WITH TIME ZONE"),
+    # Dilim 13 (0.12.9): benzersiz 7 haneli kullanıcı no
+    ("users", "public_no", "VARCHAR(7)"),
 ]
 
 # create_all'un yeni kurulumda açtığı dizin adlarıyla aynı adlar (ix_<tablo>_<sütun>)
 INDEXES = [
     "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_username ON users (username)",
     "CREATE INDEX IF NOT EXISTS ix_users_email ON users (email)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_public_no ON users (public_no)",
 ]
 
 
@@ -73,4 +76,26 @@ def ensure_schema() -> list[str]:
     with engine.begin() as conn:
         for ddl in INDEXES:
             conn.execute(text(ddl))
+    n = backfill_public_no()
+    if n:
+        done.append(f"users.public_no: {n} eski hesaba numara verildi")
     return done
+
+
+def backfill_public_no() -> int:
+    """Kullanıcı no'su olmayan eski hesaplara rastgele, benzersiz 7 haneli numara verir. Her açılışta güvenle tekrar çalışır (yalnız boş olanlara dokunur)."""
+    from .userno import unique_no
+
+    insp = inspect(engine)
+    if not insp.has_table("users") or "public_no" not in {c["name"] for c in insp.get_columns("users")}:
+        return 0
+    with engine.begin() as conn:
+        ids = [r[0] for r in conn.execute(text("SELECT id FROM users WHERE public_no IS NULL ORDER BY id")).fetchall()]
+        if not ids:
+            return 0
+        taken = {r[0] for r in conn.execute(text("SELECT public_no FROM users WHERE public_no IS NOT NULL")).fetchall()}
+        for uid_ in ids:
+            n = unique_no(taken)
+            taken.add(n)
+            conn.execute(text("UPDATE users SET public_no = :n WHERE id = :i"), {"n": n, "i": uid_})
+    return len(ids)

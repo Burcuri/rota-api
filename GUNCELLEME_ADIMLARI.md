@@ -1,10 +1,19 @@
-# Sunucu güncellemesi — Dilim 13 (15 Ekim 2026)
+# Sunucu güncellemesi — Dilim 13 · 0.12.9 (21 Ekim 2026)
 
-**Bu zip'te sunucu kodu Dilim 12 ile aynıdır (sürüm 1.10.0); değişen yalnız `app/webapp/` (yeni web ikizi derlemesi, uygulama 0.12.8; 0.12.1 → 0.12.8 değişiklikleri uygulama paketindeki `docs/DILIM-13.md`'de).**
+**Sunucu sürümü 1.11.0 (Dilim 12'de 1.10.0 idi). Sunucudaki tek yenilik: her hesaba benzersiz 7 haneli kullanıcı no (örn. 8472019).** `app/webapp/` yeni web ikizi derlemesi (uygulama 0.12.9; 0.12.1 → 0.12.9 değişiklikleri uygulama paketindeki `docs/DILIM-13.md`'de).
 GitHub'daki depo hâlâ **Dilim 11**'de (`app/nearby.py` yok). Bu zip'i yüklemek Dilim 12'yi de (haritada görünme + kısıtlı selam) getirir.
 
 **Yapılacak:** zip'i aç → GitHub `Burcuri/rota-api` → önce depodaki `app/webapp` klasörünü sil (⋯ → *Delete directory*) → **Add file → Upload files** ile zip'in **içindekileri** yükle (`app/webapp` dahil) → Render'ın kurmasını bekle.
 **Beklenen log (Dilim 12'den, yalnız ilk açılışta):** `[şema] users.visible_map eklendi`, `users.vis_lat`, `users.vis_lon`, `users.vis_at`; yeni tablolar `map_blocks`, `nudges` sessizce açılır. Yeni Python paketi ve ortam değişkeni yok.
+**Beklenen log (1.11.0, yalnız ilk açılışta):** `[şema] users.public_no eklendi` ve `[şema] users.public_no: N eski hesaba numara verildi` (N = o güne kadar açılmış hesap sayısı). İkinci açılışta bu satırlar çıkmaz.
+
+## 1.11.0 — Kullanıcı no (sunucu)
+- **Yeni sütun:** `users.public_no` (7 hane, benzersiz dizin `ix_users_public_no`). Kendiliğinden eklenir; veri silinmez.
+- **Kim nasıl alır:** yeni kayıtta otomatik. Eski hesaplara ilk açılışta toplu verilir; ayrıca numarası boş bir hesap giriş yapınca ya da `/v1/me` çağırınca da alır. Numara rastgeledir (sıralı değil, tahmin edilemez), ilk hane 0 olmaz.
+- **Değişmez:** kullanıcı değiştiremez (profil ucu yok sayar); rol değişince, şifre değişince aynı kalır. Uygulamada role göre önekle yazılır: Kurye `KRY-8472019`, İşveren `ISV-8472019`, Sponsor `SPN-8472019`. `0000000` sistem (Rota Asistan) için ayrılmıştır, gerçek hesaba verilmez.
+- **Uç değişikliği:** kullanıcı nesnesine `userNo` eklendi (kayıt, giriş, `/v1/me`, rol, şifre yanıtları). Eski uygulama bu alanı yok sayar.
+- **Yönetim paneli:** üye listesinde ve ayrıntıda `No KRY-8472019`; arama kutusuna `8472019` ya da `KRY-8472019` yazınca hesap bulunur.
+- **Deneme:** `/web` → yeni hesap aç → Hesabım üstünde `KRY-xxxxxxx` görünür; çıkıp yeniden girince aynı numara gelir. `/yonetim` › Üyeler › numarayı arat.
 
 ## Dilim 13'te ne değişti (yalnız uygulama / web ikizi)
 - "Açık Rıza" sayfası → **"Ayarlar ve özellikler"**. Sesle yazma, adres okuma (kamera → OCR) ve grup konumu **isteğe bağlı**; hepsi kapalıyken de uygulamaya girilir. "Kabul etmiyorum" düğmesi ve "üçü de gerekir" yazıları kalktı; Gizlilik ve izinler'de anahtarı kapatmak **oturumu kapatmaz**.

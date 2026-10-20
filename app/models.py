@@ -47,6 +47,8 @@ class User(Base):
     vis_lat = Column(Float)
     vis_lon = Column(Float)
     vis_at = Column(DateTime(timezone=True))
+    # Dilim 13 (0.12.9): benzersiz, değişmeyen 7 haneli kullanıcı no (örn. 8472019; ilk hane 0 olmaz). Eski satırlar açılışta doldurulur (migrate.py).
+    public_no = Column(String(7), unique=True, index=True)
 
     jobs_posted = relationship("Job", back_populates="employer", foreign_keys="Job.employer_id")
 

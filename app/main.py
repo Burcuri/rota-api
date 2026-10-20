@@ -42,6 +42,7 @@ from .relay import make_router
 from .reviews import make_router as make_reviews_router
 from .webapp import make_web_router
 from .models import ConsentLog, Job, JobPackage, User, now, uid
+from .userno import ensure_public_no, pick_no
 
 Base.metadata.create_all(bind=engine)
 # create_all var olan tabloya sütun eklemez: eski veritabanına yeni sütunlar burada eklenir
@@ -121,7 +122,7 @@ def _housekeeping_loop():
             print("[temizlik] hata:", type(e).__name__, flush=True)
 
 
-app = FastAPI(title="Rota Asistan", version="1.10.0", lifespan=lifespan)
+app = FastAPI(title="Rota Asistan", version="1.11.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -332,6 +333,8 @@ def user_out(u: User) -> dict:
         "lon": u.lon,
         "mustChangePassword": bool(u.must_change_password),
         "mapIcon": u.map_icon or "",
+        # Benzersiz 7 haneli kullanıcı no (uygulamada KRY-/ISV-/SPN- önekiyle yazılır); eski hesapta henüz yoksa boş
+        "userNo": u.public_no or "",
     }
 
 
@@ -454,23 +457,31 @@ def register(body: RegisterIn, db: Session = Depends(get_db)):
         raise HTTPException(400, "Bu telefon zaten kayıtlı — giriş yap")
     if username and db.query(User).filter(User.username == username).first():
         raise HTTPException(400, "Bu kullanıcı adı alınmış, başka bir ad seç")
-    u = User(
-        id=uid(),
-        phone=phone,
-        password_hash=hash_pw(body.password),
-        name=name or phone,
-        active_role=role,
-        username=username or None,
-        email=email or None,
-        last_login_at=now(),
-    )
-    db.add(u)
-    events.log(db, "user.register", u.id, role=role)
-    try:
-        db.commit()
-    except IntegrityError:  # aynı anda başka biri aynı telefonu / kullanıcı adını aldı
-        db.rollback()
-        raise HTTPException(400, "Bu telefon ya da kullanıcı adı zaten kayıtlı")
+    pw_hash = hash_pw(body.password)
+    for attempt in range(4):
+        u = User(
+            id=uid(),
+            phone=phone,
+            password_hash=pw_hash,
+            name=name or phone,
+            active_role=role,
+            username=username or None,
+            email=email or None,
+            last_login_at=now(),
+            public_no=pick_no(db),  # benzersiz 7 haneli kullanıcı no
+        )
+        db.add(u)
+        events.log(db, "user.register", u.id, role=role)
+        try:
+            db.commit()
+            break
+        except IntegrityError:
+            db.rollback()
+            # Aynı anda başka biri aynı telefonu / kullanıcı adını aldıysa hata; yoksa numara çakışmıştır (çok nadir): yeni numarayla yeniden dene
+            if db.query(User).filter(User.phone == phone).first() or (username and db.query(User).filter(User.username == username).first()):
+                raise HTTPException(400, "Bu telefon ya da kullanıcı adı zaten kayıtlı")
+            if attempt == 3:
+                raise HTTPException(503, "Kayıt şu an yapılamadı, tekrar deneyin")
     db.refresh(u)
     return {"token": user_token(u), "user": user_out(u)}
 
@@ -493,6 +504,8 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
     u.last_login_at = now()
     events.log(db, "user.login", u.id)
     db.commit()
+    ensure_public_no(db, u)  # eski / elle eklenmiş hesapta numara yoksa şimdi verilir
+    db.refresh(u)
     return {"token": user_token(u), "user": user_out(u)}
 
 
@@ -526,7 +539,9 @@ def change_password(body: PasswordIn, user: User = Depends(current_user), db: Se
 
 
 @app.get("/v1/me")
-def me(user: User = Depends(current_user)):
+def me(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    if ensure_public_no(db, user):
+        db.refresh(user)
     return user_out(user)
 
 

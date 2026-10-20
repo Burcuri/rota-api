@@ -3,6 +3,7 @@
   /* Rota yönetim sayfası. Veri hiçbir zaman innerHTML ile yazılmaz (yalnız metin düğümü); betik yalnız kendi sunucumuzdan yüklenir (CSP). */
   const KEY = 'rota.adm';
   const ROLE = { courier: 'Kurye', employer: 'İşyeri', sponsor: 'Sponsor' };
+  const PFX = { courier: 'KRY', employer: 'ISV', sponsor: 'SPN' }; // kullanıcı no öneki (uygulamadakiyle aynı)
   const SRC = { recipient: 'Alıcı', employer: 'İşyeri', courier: 'Kurye' };
   const FIELD = { name: 'ad', username: 'kullanıcı adı', email: 'e-posta' };
   const ACT = {
@@ -246,7 +247,7 @@
     return h('button', { type: 'button', class: 'item', onclick: () => openUser(u.id) },
       h('span', null, h('span', { class: 'nm', text: u.name || '(adsız)' }), ' ', h('span', { class: 'pill', text: ROLE[u.role] || u.role }), ' ',
         u.banned ? h('span', { class: 'pill bad', text: 'Askıda' }) : null, u.mustChangePassword ? h('span', { class: 'pill warn', text: 'Şifre bekliyor' }) : null),
-      h('span', { class: 'muted small', text: [u.phone, u.username ? '@' + u.username : '', 'son giriş: ' + when(u.lastLoginAt)].filter(Boolean).join(' · ') }));
+      h('span', { class: 'muted small', text: [u.userNo ? 'No ' + (PFX[u.role] || 'KRY') + '-' + u.userNo : '', u.phone, u.username ? '@' + u.username : '', 'son giriş: ' + when(u.lastLoginAt)].filter(Boolean).join(' · ') }));
   }
 
   function openUser(id) {
