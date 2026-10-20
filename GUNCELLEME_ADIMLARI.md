@@ -1,6 +1,6 @@
 # Sunucu güncellemesi — Dilim 13 (15 Ekim 2026)
 
-**Bu zip'te sunucu kodu Dilim 12 ile aynıdır (sürüm 1.10.0); değişen yalnız `app/webapp/` (yeni web ikizi derlemesi, uygulama 0.12.0).**
+**Bu zip'te sunucu kodu Dilim 12 ile aynıdır (sürüm 1.10.0); değişen yalnız `app/webapp/` (yeni web ikizi derlemesi, uygulama 0.12.8; 0.12.1 → 0.12.8 değişiklikleri uygulama paketindeki `docs/DILIM-13.md`'de).**
 GitHub'daki depo hâlâ **Dilim 11**'de (`app/nearby.py` yok). Bu zip'i yüklemek Dilim 12'yi de (haritada görünme + kısıtlı selam) getirir.
 
 **Yapılacak:** zip'i aç → GitHub `Burcuri/rota-api` → önce depodaki `app/webapp` klasörünü sil (⋯ → *Delete directory*) → **Add file → Upload files** ile zip'in **içindekileri** yükle (`app/webapp` dahil) → Render'ın kurmasını bekle.
