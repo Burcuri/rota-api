@@ -1,6 +1,8 @@
 (function () {
   'use strict';
   var TOKEN = (location.pathname.split('/')[2] || '').trim();
+  // Kuryenin "Konum Talebi Gönder" bağlantısı (#kapi): sayfa "Kapının yeri" sekmesiyle açılır
+  var LOC = location.hash === '#kapi';
   var BASE = '/a/' + encodeURIComponent(TOKEN);
   var $ = function (id) { return document.getElementById(id); };
   var state = null, map = null, marker = null, tab = 'aldim', pollTimer = null, mapReady = false;
@@ -50,6 +52,10 @@
       setBanner('Kurye teslimi tamamladı. İsterseniz kuryeyi “Değerlendir” sekmesinden puanlayabilirsiniz.', '');
       take.checked = false; take.disabled = true; box.className = 'take off';
       $('takeHint').textContent = 'Teslim tamamlandı.';
+    } else if (LOC && !s.pin) {
+      setBanner('Kuryeniz konumunuzu doğrulamanızı istiyor: kapınızın yerini haritada işaretleyip “Kapının yeri burası”na basın.', 'arrived');
+      take.checked = false; take.disabled = true; box.className = 'take off';
+      $('takeHint').textContent = 'Kurye hedefe ulaşınca bu kutu açılır.';
     } else {
       setBanner('Kuryeniz yolda. Kurye hedefe ulaşınca “Paketimi aldım” kutusu açılır.', '');
       take.checked = false; take.disabled = true; box.className = 'take off';
@@ -246,5 +252,8 @@
   });
 
   document.addEventListener('visibilitychange', function () { if (!document.hidden) load(); });
-  load().then(poll);
+  load().then(function () {
+    if (LOC && state && !state.received && !state.closed) show('kapi');
+    poll();
+  });
 })();

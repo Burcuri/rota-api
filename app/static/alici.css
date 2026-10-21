@@ -1,67 +1,90 @@
+/* Alıcı sayfası — 0.13.0 tasarımı: YALNIZ marka panosu renkleri (Turkuaz #00E5D4, Turuncu #FF8A00, Pembe #FF4DA6, Sarı #FFD200,
+   Beyaz, Lacivert #0D1B2A / #1B263B, Siyah #0A0A0A), saydam halleri ve açık zeminde okunur koyu yazı tonları (#006D64, #8A5A00, #AD1457).
+   Uygulamayla aynı dil: lacivert başlık, 3B (alt kenarı kalın) düğmeler, turkuaz seçili sekme. Herkes kullanır: büyük dokunma alanları,
+   yüksek karşıtlık (yazılar ≥ 4,5:1). */
+@font-face{font-family:"Poppins";font-weight:800;font-style:normal;font-display:swap;src:url("/static/fonts/Poppins-ExtraBold.ttf") format("truetype")}
 :root{
-  --bg:#ffffff; --ink:#0b1a2b; --muted:#3f4f63; --line:#b9c4d2; --card:#f1f5fa;
-  --accent:#00796f; --accent-ink:#ffffff; --ok:#0a7a3d; --warn:#8a4b00; --warn-bg:#fff4e0; --bad:#b00020;
+  --bg:#ffffff; --ink:#0D1B2A; --navy2:#1B263B; --muted:#43536A; --line:rgba(13,27,42,.22); --card:#F1F5FA; --depth:rgba(13,27,42,.24);
+  --cyan:#00E5D4; --cyanT:#006D64; --cyanSoft:rgba(0,229,212,.16);
+  --orange:#FF8A00; --orangeSoft:rgba(255,138,0,.14);
+  --pink:#FF4DA6; --pinkT:#AD1457; --pinkSoft:rgba(255,77,166,.12);
+  --yellow:#FFD200; --yellowT:#8A5A00; --yellowSoft:rgba(255,210,0,.22);
+  --display:"Poppins",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding-bottom:env(safe-area-inset-bottom)}
-header{padding:14px 16px 10px;border-bottom:2px solid var(--ink)}
-.brand{font-weight:900;font-size:20px;letter-spacing:.5px}
-.brand span{font-weight:700;color:var(--muted);font-size:15px;margin-left:6px}
-.addr{margin-top:4px;font-weight:800;font-size:18px}
-.banner{margin:12px 16px 0;padding:12px 14px;border-radius:12px;background:var(--card);border:2px solid var(--line);font-weight:800}
-.banner.arrived{background:#e6f6f4;border-color:var(--accent);color:#04403b}
-.banner.received{background:#e7f6ec;border-color:var(--ok);color:#06502a}
-.banner.bad{background:#fdecef;border-color:var(--bad);color:var(--bad)}
-.tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:12px 16px 0}
+
+/* Başlık: lacivert oyun paneli, turkuaz ROTA */
+header{padding:16px 16px 18px;background:var(--ink);color:#fff;border-radius:0 0 22px 22px;border-bottom:4px solid var(--cyan)}
+.brand{font-family:var(--display);font-weight:800;font-size:22px;letter-spacing:1.5px;color:var(--cyan)}
+.brand span{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-weight:700;color:#fff;opacity:.8;font-size:14.5px;letter-spacing:.3px;margin-left:8px}
+.addr{margin-top:6px;font-family:var(--display);font-weight:800;font-size:19px;line-height:1.3;color:#fff}
+
+/* Durum bandı: yolda (gri) · kapıda / konum talebi (turuncu) · alındı (turkuaz) · hata (pembe) */
+.banner{margin:14px 16px 0;padding:12px 14px 12px 16px;border-radius:16px;background:var(--card);border:2px solid var(--line);border-left-width:7px;font-weight:800}
+.banner.arrived{background:var(--orangeSoft);border-color:var(--orange);color:var(--ink)}
+.banner.received{background:var(--cyanSoft);border-color:var(--cyan);color:var(--ink)}
+.banner.bad{background:var(--pinkSoft);border-color:var(--pink);color:var(--pinkT)}
+
+/* Sekmeler: seçili turkuaz (uygulamadaki gibi), hepsi 3B */
+.tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 16px 0}
 @media (max-width:520px){.tabs{grid-template-columns:repeat(2,1fr)}}
-.tab{min-width:0;min-height:50px;padding:10px 6px;border-radius:12px;border:2px solid var(--line);background:#fff;color:var(--ink);font:inherit;font-weight:800;font-size:15px;line-height:1.15}
-.tab.on{background:var(--ink);color:#fff;border-color:var(--ink)}
-.pane{margin:14px 16px}
-.take{display:flex;align-items:center;gap:14px;padding:18px;border-radius:16px;border:3px solid var(--ink);background:#fff;font-weight:900;font-size:22px}
-.take.off{border-color:var(--line);color:#6b7a8c;background:var(--card)}
+.tab{min-width:0;min-height:50px;padding:10px 6px;border-radius:14px;border:2px solid var(--line);border-bottom-width:4px;border-bottom-color:var(--depth);background:#fff;color:var(--ink);font:inherit;font-weight:800;font-size:15px;line-height:1.15;cursor:pointer}
+.tab.on{background:var(--cyan);color:var(--ink);border-color:var(--cyan);border-bottom-color:var(--depth)}
+.tab:active{transform:translateY(2px);border-bottom-width:2px}
+.pane{margin:16px 16px}
+
+/* "Paketimi aldım": büyük 3B kutu; işaretlenince turkuaz ✓ */
+.take{position:relative;display:flex;align-items:center;gap:14px;padding:18px;border-radius:18px;border:3px solid var(--ink);border-bottom-width:7px;background:#fff;font-family:var(--display);font-weight:800;font-size:22px;cursor:pointer}
+.take.off{border-color:var(--line);border-bottom-color:var(--line);color:var(--muted);background:var(--card);cursor:default}
 .take input{position:absolute;opacity:0;width:1px;height:1px}
-.tick{width:38px;height:38px;border-radius:10px;border:3px solid currentColor;display:inline-flex;align-items:center;justify-content:center;flex:none}
-.take input:checked + .tick{background:var(--ok);border-color:var(--ok)}
-.take input:checked + .tick::after{content:"✓";color:#fff;font-size:28px;font-weight:900;line-height:1}
-.take input:focus-visible + .tick{outline:3px solid var(--accent);outline-offset:3px}
+.tick{width:40px;height:40px;border-radius:12px;border:3px solid currentColor;display:inline-flex;align-items:center;justify-content:center;flex:none;background:#fff}
+.take input:checked + .tick{background:var(--cyan);border-color:var(--ink)}
+.take input:checked + .tick::after{content:"✓";color:var(--ink);font-size:28px;font-weight:900;line-height:1}
+.take input:focus-visible + .tick{outline:3px solid var(--cyanT);outline-offset:3px}
 .hint{color:var(--muted);margin:10px 0}
 .hint.big{font-weight:700;color:var(--ink)}
-.warn{margin:12px 0 0;padding:10px 12px;border-radius:10px;background:var(--warn-bg);border:2px solid #e0b060;color:var(--warn);font-weight:800}
-#map{height:min(52vh,420px);border-radius:14px;border:2px solid var(--ink);margin:8px 0}
-.row{display:flex;gap:8px;flex-wrap:wrap}
-.btn{flex:1;min-height:54px;padding:12px 14px;border-radius:14px;border:0;background:var(--accent);color:var(--accent-ink);font:inherit;font-weight:900;font-size:17px}
-.btn.ghost{background:#fff;color:var(--ink);border:2px solid var(--ink)}
-.btn:disabled{opacity:.5}
+.warn{margin:12px 0 0;padding:10px 12px;border-radius:14px;background:var(--yellowSoft);border:2px solid var(--yellow);color:var(--yellowT);font-weight:800}
+#map{height:min(52vh,420px);border-radius:18px;border:2px solid var(--ink);margin:8px 0}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+
+/* Düğmeler: turkuaz 3B (lacivert yazı); ikincil beyaz + lacivert çerçeve */
+.btn{flex:1;min-height:54px;padding:12px 14px;border-radius:16px;border:0;border-bottom:5px solid var(--depth);background:var(--cyan);color:var(--ink);font-family:var(--display);font-weight:800;font-size:17px;letter-spacing:.2px;cursor:pointer}
+.btn:active:not(:disabled){transform:translateY(3px);border-bottom-width:2px}
+.btn.ghost{background:#fff;color:var(--ink);border:2px solid var(--ink);border-bottom-width:5px}
+.btn:disabled{opacity:.5;cursor:default}
 .fld{display:block;font-weight:800;margin:0 0 12px}
-.fld input{display:block;width:100%;margin-top:6px;min-height:52px;padding:10px 12px;border-radius:12px;border:2px solid var(--ink);font:inherit;font-size:18px;background:#fff;color:var(--ink)}
+.fld input{display:block;width:100%;margin-top:6px;min-height:52px;padding:10px 12px;border-radius:14px;border:2px solid var(--ink);font:inherit;font-size:18px;background:#fff;color:var(--ink)}
+.fld input:disabled{background:var(--card);color:var(--muted);border-color:var(--line)}
 .msg{min-height:1.4em;font-weight:800;margin:10px 0 0}
-.msg.ok{color:var(--ok)} .msg.bad{color:var(--bad)}
-footer{margin:22px 16px 28px;padding-top:12px;border-top:2px solid var(--line);color:var(--muted);font-size:13.5px}
+.msg.ok{color:var(--cyanT)} .msg.bad{color:var(--pinkT)}
+footer{margin:24px 16px 28px;padding-top:12px;border-top:2px solid var(--line);color:var(--muted);font-size:13.5px}
 footer p{margin:6px 0}
 .pin{width:34px;height:34px;transform:translate(-50%,-100%);}
-.pin i{display:block;width:30px;height:30px;border-radius:50% 50% 50% 0;background:var(--bad);border:3px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,.5);transform:rotate(-45deg);margin:2px}
+.pin i{display:block;width:30px;height:30px;border-radius:50% 50% 50% 0;background:var(--pink);border:3px solid #fff;box-shadow:0 1px 6px rgba(10,10,10,.5);transform:rotate(-45deg);margin:2px}
 .leaflet-container{font:inherit}
 
 /* ---- Değerlendir sekmesi */
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
-.tab:focus-visible,.chip:focus-visible,.lnk:focus-visible,.btn:focus-visible,textarea:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
-.q{margin:0 0 14px;padding:10px 12px 14px;border:2px solid var(--line);border-radius:14px;background:#fff;min-width:0}
+.tab:focus-visible,.chip:focus-visible,.lnk:focus-visible,.btn:focus-visible,textarea:focus-visible,.fld input:focus-visible{outline:3px solid var(--cyanT);outline-offset:2px}
+.q{margin:0 0 14px;padding:10px 12px 14px;border:2px solid var(--line);border-radius:18px;background:#fff;min-width:0}
 .q legend{font-weight:900;padding:0 6px;font-size:17px}
-.req{margin-left:6px;padding:1px 7px;border-radius:6px;background:var(--bad);color:#fff;font-size:12.5px;font-weight:900;vertical-align:1px}
+.req{margin-left:6px;padding:1px 8px;border-radius:999px;background:var(--pink);color:var(--ink);font-size:12.5px;font-weight:900;vertical-align:1px}
 .opt{margin-left:6px;color:var(--muted);font-size:13.5px;font-weight:700}
 .stars{display:flex;gap:6px;margin-top:6px}
-.star{flex:1;position:relative;display:block}
+.star{flex:1;position:relative;display:block;cursor:pointer}
 .star input{position:absolute;opacity:0;width:1px;height:1px}
-.star .g{display:flex;align-items:center;justify-content:center;min-height:58px;border-radius:12px;border:2px solid var(--line);background:#fff;color:#5b6b7d;font-size:32px;line-height:1}
-.star.on .g{background:#fff4d6;border-color:#a86a00;color:#8a4b00}
-.star input:focus-visible + .g{outline:3px solid var(--accent);outline-offset:2px}
+.star .g{display:flex;align-items:center;justify-content:center;min-height:58px;border-radius:14px;border:2px solid var(--line);border-bottom-width:4px;background:#fff;color:var(--muted);font-size:32px;line-height:1}
+.star.on .g{background:var(--yellowSoft);border-color:var(--yellow);border-bottom-color:var(--yellowT);color:var(--yellowT)}
+.star input:focus-visible + .g{outline:3px solid var(--cyanT);outline-offset:2px}
 .starTxt{margin:8px 0 0;font-weight:800;color:var(--muted);min-height:1.4em}
 .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
-.chip{min-height:48px;padding:8px 14px;border-radius:24px;border:2px solid var(--line);background:#fff;color:var(--ink);font:inherit;font-weight:800;font-size:16px}
-.chip[aria-pressed="true"]{background:var(--ink);color:#fff;border-color:var(--ink)}
-.rv textarea{display:block;width:100%;margin-top:6px;min-height:110px;padding:10px 12px;border-radius:12px;border:2px solid var(--ink);font:inherit;font-size:17px;background:#fff;color:var(--ink);resize:vertical}
+.chip{min-height:48px;padding:8px 14px;border-radius:24px;border:2px solid var(--line);border-bottom-width:4px;background:#fff;color:var(--ink);font:inherit;font-weight:800;font-size:16px;cursor:pointer}
+.chip[aria-pressed="true"]{background:var(--ink);color:#fff;border-color:var(--ink);border-bottom-color:var(--cyan)}
+.rv textarea{display:block;width:100%;margin-top:6px;min-height:110px;padding:10px 12px;border-radius:14px;border:2px solid var(--ink);font:inherit;font-size:17px;background:#fff;color:var(--ink);resize:vertical}
 .cnt{margin:4px 0 8px;text-align:right;color:var(--muted);font-size:14px}
-.lnk{background:none;border:0;padding:8px 2px;min-height:44px;color:var(--ink);font:inherit;font-weight:800;text-decoration:underline}
-.note{margin:0 0 12px;padding:10px 12px;border-radius:10px;font-weight:800;border:2px solid var(--ok);background:#e7f6ec;color:#06502a}
+.lnk{background:none;border:0;padding:8px 2px;min-height:44px;color:var(--ink);font:inherit;font-weight:800;text-decoration:underline;cursor:pointer}
+.note{margin:0 0 12px;padding:10px 12px;border-radius:14px;font-weight:800;border:2px solid var(--cyan);background:var(--cyanSoft);color:var(--ink)}
 .goReview{margin-top:12px;width:100%}

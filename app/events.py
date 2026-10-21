@@ -29,6 +29,7 @@ KINDS = {
     "vehicle.unshare": "Araç profilini işletmelere kapattı",
     "handoff.create": "Teslim bağlantısı üretti",
     "handoff.arrived": "Hedefe ulaştı",
+    "handoff.locreq": "Alıcıya konum talebi gönderildi",
     "handoff.received": "Alıcı 'Paketimi aldım' dedi",
     "handoff.pin": "Alıcı kapı noktası işaretledi",
     "handoff.closed": "Teslimi bitirdi",

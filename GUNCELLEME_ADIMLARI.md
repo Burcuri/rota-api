@@ -1,11 +1,32 @@
-# Sunucu güncellemesi — Dilim 13 · 0.12.9 (21 Ekim 2026)
+# Sunucu güncellemesi — Dilim 14 · 0.13.0 oyunvari tasarım (22 Ekim 2026)
 
-**Sunucu sürümü 1.11.0 (Dilim 12'de 1.10.0 idi). Sunucudaki tek yenilik: her hesaba benzersiz 7 haneli kullanıcı no (örn. 8472019).** `app/webapp/` yeni web ikizi derlemesi (uygulama 0.12.9; 0.12.1 → 0.12.9 değişiklikleri uygulama paketindeki `docs/DILIM-13.md`'de).
+**Sunucu Python'u DEĞİŞMEDİ (sürüm yine 1.12.0).** Yeni tablo / sütun / ortam değişkeni / Python paketi YOK. Değişen yalnız görünüm:
+- `app/webapp/` — yeni web ikizi derlemesi (uygulama 0.13.0: yalnız marka renkleri, Poppins + Inter yazı tipi, 3B düğmeler). Ayrıntı: uygulama paketindeki `docs/DILIM-14.md`.
+- `app/static/alici.css`, `alici.html` — alıcı sayfası marka renklerinde (lacivert başlık, turkuaz sekme, pembe pin). İşlev aynı.
+- `app/static/yonetim.css`, `yonetim.html` — yönetim paneli marka renklerinde (açık ve koyu). İşlev aynı; girişten önce sağ üstte görünen "Çıkış" düğmesi artık gizli.
+- `app/static/fonts/` (yeni) — `Poppins-ExtraBold.ttf` (24 KB, OFL lisansı yanında).
+
+**1.12.0 paketini zaten yüklediysen:** GitHub `Burcuri/rota-api` → `app/webapp` klasörünü sil (⋯ → *Delete directory*) → **Add file → Upload files** ile zip'in içindekileri yükle (`app/webapp`, `app/static` dahil) → Render'ın kurmasını bekle. Logda yeni satır beklenmez.
+**Deneme:** `/web` açılır, yazılar Poppins / Inter, renkler panodaki 8 renk. Bir alıcı bağlantısı (`/a/…`) lacivert başlıkla açılır. `/yonetim` turkuaz sekmelerle açılır.
+
+---
+
+# Sunucu güncellemesi — Dilim 13 · 0.12.12 (21 Ekim 2026)
+
+**Sunucu sürümü 1.12.0 (0.12.11'de 1.11.0 idi). Yenilik: kuryenin "✉️ Konum Talebi Gönder" düğmesi için alıcıya giden konum talebi metni (`app/handoff.py`: `purpose` = handoff | location) ve alıcı sayfasının "Kapının yeri" sekmesiyle açılması (`app/static/alici.js`, `#kapi`).** Yeni tablo / sütun / ortam değişkeni YOK; yeni log satırı yok. `app/webapp/` yeni web ikizi derlemesi (uygulama 0.12.12; değişiklikler uygulama paketindeki `docs/DILIM-13.md`'de). 1.11.0'daki kullanıcı no (users.public_no) aynen duruyor.
+**0.12.11 paketine göre fark (0.12.12): `app/handoff.py`, `app/events.py`, `app/main.py` (sürüm), `app/static/alici.js`, `app/static/alici.html`, `tests/test_handoff.py` ve `app/webapp/`.** Eski uygulama sürümleri etkilenmez (alan isteğe bağlı; gönderilmezse eski teslim metni gider).
 GitHub'daki depo hâlâ **Dilim 11**'de (`app/nearby.py` yok). Bu zip'i yüklemek Dilim 12'yi de (haritada görünme + kısıtlı selam) getirir.
 
 **Yapılacak:** zip'i aç → GitHub `Burcuri/rota-api` → önce depodaki `app/webapp` klasörünü sil (⋯ → *Delete directory*) → **Add file → Upload files** ile zip'in **içindekileri** yükle (`app/webapp` dahil) → Render'ın kurmasını bekle.
 **Beklenen log (Dilim 12'den, yalnız ilk açılışta):** `[şema] users.visible_map eklendi`, `users.vis_lat`, `users.vis_lon`, `users.vis_at`; yeni tablolar `map_blocks`, `nudges` sessizce açılır. Yeni Python paketi ve ortam değişkeni yok.
 **Beklenen log (1.11.0, yalnız ilk açılışta):** `[şema] users.public_no eklendi` ve `[şema] users.public_no: N eski hesaba numara verildi` (N = o güne kadar açılmış hesap sayısı). İkinci açılışta bu satırlar çıkmaz.
+
+## 1.12.0 — Konum talebi (sunucu)
+- `POST /v1/handoffs` gövdesinde isteğe bağlı `purpose`: `handoff` (varsayılan, eski metin) | `location` (konum talebi metni; bağlantı `…/a/<kod>#kapi`). `POST /v1/handoffs/{id}/send?purpose=location` de aynı. Başka değer 422.
+- SMS: "Kuryeniz paketinizi doğru adrese getirmek için konumunuzu doğrulamanızı istiyor. Bağlantıdan kapınızın yerini haritada işaretleyin: <bağlantı>"; e-posta konusu "Kuryeniz konumunuzu doğrulamanızı istiyor".
+- Gönderim sınırı aynı: bir durak için en çok 3 gönderim (teslim + konum talebi birlikte sayılır).
+- Yönetim etkinlik akışında yeni satır: "Alıcıya konum talebi gönderildi" (`handoff.locreq`).
+- Denemeler: pytest 343/343.
 
 ## 1.11.0 — Kullanıcı no (sunucu)
 - **Yeni sütun:** `users.public_no` (7 hane, benzersiz dizin `ix_users_public_no`). Kendiliğinden eklenir; veri silinmez.

@@ -142,6 +142,45 @@ def test_email_goes_out_when_provider_on():
     assert fake.mail[0][0] == "alici@example.com" and token_of(h) in fake.mail[0][2] and "48" in fake.mail[0][2]
 
 
+def test_location_request_test_mode_gives_location_text_and_pin_tab_link():
+    """Kurye kartındaki "✉️ Konum Talebi Gönder" (1.12.0): aynı bağlantı, konum metni, sayfa "Kapının yeri" sekmesiyle (#kapi)."""
+    tok, _ = courier()
+    h = create(tok, ref="loc-1", send=True, purpose="location")
+    assert h["sent"] == {"sms": False, "email": False}
+    assert h["link"].endswith("/a/" + token_of(h) + "#kapi")
+    assert h["shareText"].startswith("Kuryeniz paketinizi doğru adrese getirmek için konumunuzu doğrulamanızı istiyor.")
+    assert h["link"] in h["shareText"] and "Paketimi aldım" not in h["shareText"]
+    # aynı durak için sonradan teslim bağlantısı: AYNI kayıt, teslim metni
+    h2 = create(tok, ref="loc-1", send=True)
+    assert h2["id"] == h["id"] and "Paketimi aldım" in h2["shareText"] and not h2["link"].endswith("#kapi")
+    # alıcı sayfası adresi (#kapi sunucuya gitmez) çalışır
+    assert client.get("/a/" + token_of(h)).status_code == 200
+
+
+def test_location_request_sms_mode_uses_location_text():
+    fake = FakeBackend()
+    notify.set_backend(fake)
+    tok, _ = courier()
+    h = create(tok, send=True, purpose="location")
+    assert h["sent"]["sms"] is True and "link" not in h
+    to, text = fake.sms[0]
+    assert to == PHONE and "konumunuzu doğrulamanızı istiyor" in text and token_of(h) + "#kapi" in text
+    again = client.post(f"/v1/handoffs/{h['id']}/send?purpose=location", headers=auth(tok))
+    assert again.status_code == 200 and "konumunuzu" in fake.sms[1][1]
+    fake2 = FakeBackend(sms=False)
+    notify.set_backend(fake2)
+    m = create(tok, send=True, purpose="location", email="alici@example.com", phone="")
+    assert m["sent"]["email"] is True and fake2.mail[0][1] == "Kuryeniz konumunuzu doğrulamanızı istiyor" and "#kapi" in fake2.mail[0][2]
+
+
+def test_location_request_bad_purpose_is_rejected():
+    tok, _ = courier()
+    r = client.post("/v1/handoffs", headers=auth(tok), json=body(send=True, purpose="spam"))
+    assert r.status_code == 422
+    h = create(tok)
+    assert client.post(f"/v1/handoffs/{h['id']}/send?purpose=spam", headers=auth(tok)).status_code == 422
+
+
 def test_send_limit_is_three():
     tok, _ = courier()
     h = create(tok, ref="lim", send=True)

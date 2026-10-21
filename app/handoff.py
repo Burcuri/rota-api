@@ -46,6 +46,16 @@ EMAIL_TEXT = (
     "{link}\n\nBu bağlantı ve girdiğiniz bilgiler en geç {hours} saat içinde silinir."
 )
 
+# Konum talebi (1.12.0): kurye kartındaki "✉️ Konum Talebi Gönder". Aynı alıcı bağlantısı, "Kapının yeri" sekmesi açık gelir (#kapi).
+LOC_SMS_TEXT = 'Kuryeniz paketinizi doğru adrese getirmek için konumunuzu doğrulamanızı istiyor. Bağlantıdan kapınızın yerini haritada işaretleyin: {link}'
+LOC_EMAIL_SUBJECT = 'Kuryeniz konumunuzu doğrulamanızı istiyor'
+LOC_EMAIL_TEXT = (
+    "Merhaba,\n\nKuryeniz paketinizi doğru adrese getirmek için konumunuzu doğrulamanızı istiyor.\n"
+    "Aşağıdaki bağlantıdan kapınızın yerini haritada işaretleyin.\n\n"
+    "{link}\n\nBu bağlantı ve girdiğiniz bilgiler en geç {hours} saat içinde silinir."
+)
+PURPOSES = ("handoff", "location")
+
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{10,24}$")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 MAX_PIN_FROM_GUESS_M = 5000.0  # alıcı pini sistemin tahmininden en çok bu kadar uzak olabilir
@@ -105,6 +115,8 @@ class HandoffIn(BaseModel):
     site: str = Field(default="", max_length=120)
     door: str = Field(default="", max_length=40)
     send: bool = False  # bağlantıyı şimdi alıcıya gönder (sağlayıcı varsa SMS / e-posta)
+    # "handoff": teslim onayı ("Paketimi aldım") metni; "location": konum talebi metni, sayfa "Kapının yeri" sekmesiyle açılır
+    purpose: str = Field(default="handoff", pattern="^(handoff|location)$")
 
     model_config = {"populate_by_name": True}
 
@@ -162,13 +174,14 @@ def make_router(add_pin, ttl_hours: float = 48, daily_max: int = 300, review_hou
             raise HTTPException(404, "Bağlantı bulunamadı")
         return h
 
-    def link_of(request: Request, h: Handoff) -> str:
-        return f"{public_base(request)}/a/{h.token}"
+    def link_of(request: Request, h: Handoff, purpose: str = "handoff") -> str:
+        base = f"{public_base(request)}/a/{h.token}"
+        return base + "#kapi" if purpose == "location" else base
 
-    def share_text(link: str) -> str:
-        return SMS_TEXT.format(link=link)
+    def share_text(link: str, purpose: str = "handoff") -> str:
+        return (LOC_SMS_TEXT if purpose == "location" else SMS_TEXT).format(link=link)
 
-    def out(request: Request, h: Handoff, link: str | None = None, sent: dict | None = None) -> dict:
+    def out(request: Request, h: Handoff, link: str | None = None, sent: dict | None = None, purpose: str = "handoff") -> dict:
         d = {
             "id": h.id,
             "ref": h.ref,
@@ -187,14 +200,16 @@ def make_router(add_pin, ttl_hours: float = 48, daily_max: int = 300, review_hou
             d["sent"] = sent
         if link:
             d["link"] = link
-            d["shareText"] = share_text(link)
+            d["shareText"] = share_text(link, purpose)
         return d
 
-    def deliver(request: Request, h: Handoff) -> dict:
+    def deliver(request: Request, h: Handoff, purpose: str = "handoff") -> dict:
         """Bağlantıyı alıcıya sunucudan gönderir (sağlayıcı varsa). Dönen: {'sms': bool, 'email': bool}."""
-        link = link_of(request, h)
-        sms = bool(h.phone.startswith("05") and notify.sms_enabled() and notify.send_sms(h.phone, share_text(link)))
-        mail = bool(h.email and notify.email_enabled() and notify.send_email(h.email, EMAIL_SUBJECT, EMAIL_TEXT.format(link=link, hours=int(ttl_hours))))
+        link = link_of(request, h, purpose)
+        loc = purpose == "location"
+        subject, body = (LOC_EMAIL_SUBJECT, LOC_EMAIL_TEXT) if loc else (EMAIL_SUBJECT, EMAIL_TEXT)
+        sms = bool(h.phone.startswith("05") and notify.sms_enabled() and notify.send_sms(h.phone, share_text(link, purpose)))
+        mail = bool(h.email and notify.email_enabled() and notify.send_email(h.email, subject, body.format(link=link, hours=int(ttl_hours))))
         h.send_count = (h.send_count or 0) + 1
         if sms or mail:
             h.mode = "sms" if sms else "email"
@@ -251,13 +266,15 @@ def make_router(add_pin, ttl_hours: float = 48, daily_max: int = 300, review_hou
         if b.send and h.status != "received":
             if h.send_count >= MAX_SENDS:
                 raise HTTPException(429, f"Bağlantı en çok {MAX_SENDS} kez gönderilebilir")
-            sent = deliver(request, h)
+            sent = deliver(request, h, b.purpose)
             if not (sent["sms"] or sent["email"]):  # gönderilemedi / sağlayıcı yok: kurye kendisi iletsin
-                link = link_of(request, h)
+                link = link_of(request, h, b.purpose)
                 h.link_seen = True
+            if b.purpose == "location":
+                events.log(db, "handoff.locreq", user.id, h.id)
         db.commit()
         db.refresh(h)
-        return out(request, h, link=link, sent=sent)
+        return out(request, h, link=link, sent=sent, purpose=b.purpose)
 
     @r.get("/v1/handoffs/{hid}/link")
     def get_link(hid: str, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
@@ -269,19 +286,20 @@ def make_router(add_pin, ttl_hours: float = 48, daily_max: int = 300, review_hou
         return {"link": link, "shareText": share_text(link)}
 
     @r.post("/v1/handoffs/{hid}/send")
-    def send_again(hid: str, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    def send_again(hid: str, request: Request, purpose: str = Query(default="handoff", pattern="^(handoff|location)$"),
+                   user: User = Depends(current_user), db: Session = Depends(get_db)):
         h = mine(db, user, hid)
         if h.status == "received":
             return out(request, h, sent={"sms": False, "email": False})
         if h.send_count >= MAX_SENDS:
             raise HTTPException(429, f"Bağlantı en çok {MAX_SENDS} kez gönderilebilir")
-        sent = deliver(request, h)
+        sent = deliver(request, h, purpose)
         link = None
         if not (sent["sms"] or sent["email"]):
-            link = link_of(request, h)
+            link = link_of(request, h, purpose)
             h.link_seen = True
         db.commit()
-        return out(request, h, link=link, sent=sent)
+        return out(request, h, link=link, sent=sent, purpose=purpose)
 
     @r.post("/v1/handoffs/{hid}/arrived")
     def arrived(hid: str, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
