@@ -1,3 +1,17 @@
+# Sunucu güncellemesi — Dilim 14 · 0.13.1 (22 Ekim 2026) — sunucu 1.13.0
+
+**Python değişti (küçük): sürüm 1.13.0.** Takip yanıtında (`GET /v1/follow/mine`, `GET /v1/follow/{id}`) karşı tarafın `peer` nesnesine
+`icon` (harita ikonu kimliği) ve `userNo` (7 haneli kullanıcı no) eklendi: işverenin "CANLI DAĞITIM PANELİ" kartı kuryenin avatarını ve
+KRY numarasını gösterir. Fotoğraf sunucuya gelmez (sütun yok). Yeni tablo / sütun / ortam değişkeni / Python paketi YOK; logda yeni satır yok.
+**Değişen dosyalar:** `app/follow.py`, `app/main.py` (sürüm), `tests/test_follow.py` (+1 deneme) ve `app/webapp/` (uygulama 0.13.1).
+Ayrıntı: uygulama paketindeki `docs/DILIM-14.md` › 0.13.1. Eski uygulama yeni alanları yok sayar.
+
+**Yapılacak:** GitHub `Burcuri/rota-api` → `app/webapp` klasörünü sil (⋯ → *Delete directory*) → **Add file → Upload files** ile zip'in
+içindekileri yükle → Render'ın kurmasını bekle. **Deneme:** kurye Hesabım › Avatar'dan bir harita ikonu seçer; işveren onu takibe alınca
+ana sayfadaki kartta halkanın içinde o ikon ve adın altında `KRY-xxxxxxx` görünür.
+
+---
+
 # Sunucu güncellemesi — Dilim 14 · 0.13.0 oyunvari tasarım (22 Ekim 2026)
 
 **Sunucu Python'u DEĞİŞMEDİ (sürüm yine 1.12.0).** Yeni tablo / sütun / ortam değişkeni / Python paketi YOK. Değişen yalnız görünüm:

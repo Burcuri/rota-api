@@ -133,6 +133,27 @@ def test_only_an_employer_can_ask_and_only_a_courier_can_be_asked():
     assert "location" not in j
 
 
+def test_peer_carries_map_icon_and_user_no_for_the_live_panel_card():
+    """1.13.0: işverenin canlı dağıtım kartı kuryenin harita ikonunu ve KRY numarasını gösterir; kurye de işverenin ikonunu / numarasını alır.
+    Fotoğraf sunucuya hiç gelmez (yalnız ikon kimliği)."""
+    e, eid = new("employer")
+    c, cid = new("courier")
+    assert client.post("/v1/me/map-icon", json={"icon": "simsek"}, headers=auth(c)).status_code == 200
+    me_c = client.get("/v1/me", headers=auth(c)).json()
+    me_e = client.get("/v1/me", headers=auth(e)).json()
+    fid = start(e, c, cid)
+    pe = get(e, fid).json()["peer"]
+    assert pe["id"] == cid and pe["icon"] == "simsek" and pe["userNo"] == me_c["userNo"] and len(pe["userNo"]) == 7
+    items = client.get("/v1/follow/mine", headers=auth(e)).json()["items"]
+    assert [x["peer"]["icon"] for x in items if x["id"] == fid] == ["simsek"]
+    pc = get(c, fid).json()["peer"]
+    assert pc["id"] == eid and pc["icon"] == "" and pc["userNo"] == me_e["userNo"]
+    assert set(pe) == {"id", "name", "icon", "userNo"}  # başka kişisel alan (telefon, e-posta, fotoğraf) yok
+    # ikon değişince kart da değişir
+    client.post("/v1/me/map-icon", json={"icon": "kedi"}, headers=auth(c))
+    assert get(e, fid).json()["peer"]["icon"] == "kedi"
+
+
 def test_no_location_is_taken_before_the_courier_accepts():
     e, _ = new("employer")
     c, cid = new("courier")

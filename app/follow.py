@@ -203,21 +203,25 @@ def make_router(
             f.last_at = None
         return True
 
-    def names_of(db: Session, rows: list[Follow]) -> dict[str, str]:
+    def names_of(db: Session, rows: list[Follow]) -> dict[str, dict]:
+        """Taraflar: ad + harita ikonu + kullanıcı no (1.13.0: işverenin canlı dağıtım kartında kuryenin avatarı ve KRY numarası).
+        İkon zaten haritada başka kullanıcılara görünen rozettir; numara kayıtlarda kullanılan kimliktir. Fotoğraf sunucuda YOK."""
         ids = {x for f in rows for x in (f.employer_id, f.courier_id)}
         if not ids:
             return {}
-        return {i: n for i, n in db.query(User.id, User.name).filter(User.id.in_(ids)).all()}
+        q = db.query(User.id, User.name, User.map_icon, User.public_no).filter(User.id.in_(ids)).all()
+        return {i: {"name": n or "", "icon": ic or "", "userNo": no or ""} for i, n, ic, no in q}
 
-    def out(f: Follow, viewer_id: str, names: dict[str, str]) -> dict:
+    def out(f: Follow, viewer_id: str, names: dict[str, dict]) -> dict:
         side = "employer" if f.employer_id == viewer_id else "courier"
         peer_id = f.courier_id if side == "employer" else f.employer_id
+        pi = names.get(peer_id) or {}
         o = {
             "id": f.id,
             "side": side,
             "status": f.status,
             "endReason": f.end_reason or "",
-            "peer": {"id": peer_id, "name": names.get(peer_id, "")},
+            "peer": {"id": peer_id, "name": pi.get("name", ""), "icon": pi.get("icon", ""), "userNo": pi.get("userNo", "")},
             "createdAt": _iso(f.created_at),
             "acceptedAt": _iso(f.accepted_at),
             "endedAt": _iso(f.ended_at),
