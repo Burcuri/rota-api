@@ -37,6 +37,7 @@ from .admin import make_router as make_admin_router
 from .errors import make_router as make_errors_router
 from .follow import make_router as make_follow_router
 from .tasks import OPEN as TASK_OPEN, end_tasks_for_job, make_router as make_tasks_router, people_of as task_people
+from .logos import logo_version, make_router as make_logos_router
 from .nearby import make_router as make_nearby_router
 from .vehicle import make_router as make_vehicle_router, withdraw as vehicle_withdraw
 from .handoff import make_router as make_handoff_router
@@ -129,7 +130,7 @@ def _housekeeping_loop():
             print("[temizlik] hata:", type(e).__name__, flush=True)
 
 
-app = FastAPI(title="Rota Asistan", version="1.14.0", lifespan=lifespan)
+app = FastAPI(title="Rota Asistan", version="1.14.1", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -196,6 +197,7 @@ app.include_router(vehicle_router)
 errors_router = make_errors_router(ERROR_KEEP_DAYS, ERROR_MAX_ROWS, ERROR_DAILY_MAX)
 app.include_router(errors_router)
 admin_router = make_admin_router(ERROR_KEEP_DAYS, FOLLOW_KEEP_HOURS)
+app.include_router(make_logos_router(current_user))  # 1.14.1: işletme logosu (profil fotoğrafı yok)
 app.include_router(admin_router)
 app.include_router(make_web_router())  # /web: uygulamanın tarayıcı sürümü (web ikizi)
 
@@ -346,6 +348,8 @@ def user_out(u: User) -> dict:
         "userNo": u.public_no or "",
         # 1.14.0: kalıcı çalışma bölgesi (il, ilçe, en çok 3 mahalle): her girişte yeniden sorulmaz, her telefonda aynı
         "workArea": work_area_of(u),
+        # 1.14.1: işletme logosu sürümü ('' = yok; yönetim silince boşalır, uygulama bunu görüp telefondaki logoyu da kaldırır)
+        "logo": logo_version(u),
     }
 
 
@@ -440,6 +444,10 @@ def job_out(j: Job, db: Session, include_packages=False) -> dict:
     def person(u: User | None) -> dict | None:
         return {"id": u.id, "name": u.name} if u else None
 
+    def business(u: User | None) -> dict | None:
+        # 1.14.1: işletmenin logosu (sürüm; resim /v1/logo/{id} adresinden). Kişilerde fotoğraf yok.
+        return {"id": u.id, "name": u.name, "logo": logo_version(u)} if u else None
+
     return {
         "id": j.id,
         "title": j.title,
@@ -451,7 +459,7 @@ def job_out(j: Job, db: Session, include_packages=False) -> dict:
         "area": j.area or "",
         "fee": j.fee,
         "createdAt": j.created_at.isoformat() if j.created_at else None,
-        "employer": person(employer),
+        "employer": business(employer),
         "applicant": person(applicant),
         "courier": person(courier),
         "packages": [pkg_out(p, base) for p in pkgs] if include_packages else None,

@@ -13,6 +13,7 @@
     user_edit: 'Üye bilgilerini düzenledi', user_ban: 'Üyeyi uygulamadan men etti', user_unban: 'Üyenin menini kaldırdı', user_password: 'Üyeye yeni şifre verdi', user_logout: 'Üyenin oturumlarını kapattı',
     review_hide: 'Değerlendirmeyi gizledi', review_unhide: 'Değerlendirmeyi yeniden gösterdi', review_delete: 'Değerlendirmeyi kalıcı sildi',
     follow_view: 'Takip kaydının konum izini açtı',
+    logo_delete: 'İşletme logosunu sildi',
   };
   const TARGET = { user: 'üye', admin: 'yönetici', review: 'değerlendirme', follow: 'takip' };
   const FSTATUS = { asked: 'Yanıt bekliyor', active: 'Sürüyor', ended: 'Bitti' };
@@ -155,7 +156,7 @@
   }
 
   // ------------------------------------------------------------------ uygulama kabuğu
-  const TABS = [['ozet', 'Özet'], ['uyeler', 'Üyeler'], ['etkinlik', 'Etkinlik'], ['takipler', 'Takipler'], ['yorumlar', 'Yorumlar'], ['hatalar', 'Hatalar'], ['hesap', 'Hesabım']];
+  const TABS = [['ozet', 'Özet'], ['uyeler', 'Üyeler'], ['etkinlik', 'Etkinlik'], ['takipler', 'Takipler'], ['yorumlar', 'Yorumlar'], ['logolar', 'Logolar'], ['hatalar', 'Hatalar'], ['hesap', 'Hesabım']];
 
   function showApp() {
     document.getElementById('who').hidden = false;
@@ -177,7 +178,7 @@
     ctx.tab = tab;
     Array.prototype.forEach.call(document.querySelectorAll('.tab'), (b) => b.setAttribute('aria-selected', b.getAttribute('data-tab') === tab ? 'true' : 'false'));
     clear(ctx.content);
-    ({ ozet: tabOzet, uyeler: tabUyeler, etkinlik: tabEtkinlik, takipler: tabTakipler, yorumlar: tabYorumlar, hatalar: tabHatalar, hesap: tabHesap })[tab]();
+    ({ ozet: tabOzet, uyeler: tabUyeler, etkinlik: tabEtkinlik, takipler: tabTakipler, yorumlar: tabYorumlar, logolar: tabLogolar, hatalar: tabHatalar, hesap: tabHesap })[tab]();
   }
 
   function loading(node) { clear(node); node.appendChild(h('p', { class: 'muted', text: 'Yükleniyor…' })); }
@@ -565,6 +566,39 @@
     c.appendChild(h('h2', { text: 'Değerlendirmeler ve anket yorumları' }));
     c.appendChild(h('p', { class: 'small muted', text: 'Alıcı, işyeri ve kurye anketleri (5 yıldız üzerinden). Yorum metnini yalnız yönetim okur. Gizlenen değerlendirme ortalamaya girmez.' }));
     c.appendChild(h('div', { class: 'row' }, source, st, hid, q, h('button', { type: 'button', class: 'btn', text: 'Ara', onclick: () => load(true) })));
+    c.appendChild(info); c.appendChild(list); c.appendChild(h('div', { class: 'row' }, more));
+    load(true);
+  }
+
+  // ------------------------------------------------------------------ Logolar (1.14.1: profil fotoğrafı yok; yalnız işletme logosu)
+  function tabLogolar() {
+    const c = ctx.content;
+    const list = h('div', { class: 'logos' }); const info = h('div', { class: 'msg', role: 'status' });
+    const more = h('button', { type: 'button', class: 'btn ghost', text: 'Daha eski olanlar', hidden: true });
+    let last = '';
+    function card(x) {
+      const box = h('div', { class: 'box logo-card' });
+      box.appendChild(h('img', { src: '/v1/logo/' + encodeURIComponent(x.id) + '?v=' + encodeURIComponent(x.v), alt: 'logo: ' + (x.name || ''), class: 'logo-img', loading: 'lazy' }));
+      box.appendChild(h('div', { class: 'grow' },
+        h('h3', { text: x.name || '(adsız)' }),
+        h('div', { class: 'muted small', text: (x.userNo ? (PFX[x.role] || 'ISV') + '-' + x.userNo + ' · ' : '') + (ROLE[x.role] || x.role) + ' · ' + x.kb + ' KB · ' + when(x.at) + (x.banned ? ' · askıda' : '') }),
+        confirmBtn('Logoyu sil', 'danger', 'Logo silinsin mi?', () => {
+          api('DELETE', '/v1/admin/users/' + encodeURIComponent(x.id) + '/logo').then(() => { box.remove(); if (!list.firstChild) say(info, 'Logo yok.', ''); }).catch((er) => say(info, er.message, 'bad'));
+        })));
+      return box;
+    }
+    function load(reset) {
+      if (reset) { clear(list); last = ''; }
+      api('GET', '/v1/admin/logos?' + qs({ before: last, limit: 60 })).then((r) => {
+        r.items.forEach((x) => list.appendChild(card(x)));
+        if (r.items.length) last = r.items[r.items.length - 1].at;
+        more.hidden = r.items.length < 60;
+        say(info, !list.firstChild ? 'Logo yok.' : '', '');
+      }).catch((er) => say(info, er.message, 'bad'));
+    }
+    more.addEventListener('click', () => load(false));
+    c.appendChild(h('h2', { text: 'İşletme logoları' }));
+    c.appendChild(h('p', { class: 'small muted', text: 'Uygulamada profil fotoğrafı yok (kişiler avatar seçer); yalnız işletmeler logo yükler. Logo olmayan resmi (kişi fotoğrafı, uygunsuz görsel) silin: kullanıcı yüklerken bu uyarıyı görür. Silinen logo uygulamada da kalkar.' }));
     c.appendChild(info); c.appendChild(list); c.appendChild(h('div', { class: 'row' }, more));
     load(true);
   }

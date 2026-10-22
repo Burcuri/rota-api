@@ -1,3 +1,26 @@
+# Sunucu güncellemesi — Dilim 16 · 0.14.1 (22 Ekim 2026) — sunucu 1.14.1
+
+**Python değişti (küçük): sürüm 1.14.1.** Ayrıntı: uygulama paketindeki `docs/DILIM-16.md`.
+- **Kullanıcı kararı:** profil fotoğrafı YOK (kişiler avatar seçer); yalnız **işletme logo yükler**; logo dışı resmi **yönetim siler**.
+- **Yeni dosya `app/logos.py`:** `POST /v1/me/logo` (yalnız işveren / sponsor modunda; JPEG / PNG / WEBP, gerçek baytlara bakılır, SVG yok,
+  en çok 150 KB; boş = kaldır), `GET /v1/logo/{id}` (oturumsuz resim; askıdaki hesabın logosu verilmez).
+  `/v1/me` ve giriş yanıtında `logo` (sürüm; '' = yok). İlanlarda `employer.logo` (kurye ilan kartında logoyu görür).
+- **Yönetim:** yeni **Logolar** sekmesi (`GET /v1/admin/logos`, `DELETE /v1/admin/users/{id}/logo`; işlem günlüğüne "İşletme logosunu sildi").
+  Silinen logo uygulamada da kalkar (kullanıcıya bildirim düşer).
+- **Yeni sütunlar:** `users.logo`, `users.logo_type`, `users.logo_at`.
+  **Beklenen log (yalnız ilk açılışta):** `[şema] users.logo eklendi`, `[şema] users.logo_type eklendi`, `[şema] users.logo_at eklendi`.
+- İsteğe bağlı ortam değişkeni: `LOGO_MAX_KB` (varsayılan 150). Yeni Python paketi YOK.
+- **Değişen dosyalar:** `app/logos.py` (yeni), `app/main.py`, `app/models.py`, `app/migrate.py`, `app/admin.py`, `app/static/yonetim.*`,
+  `tests/test_logos.py` (yeni), `tests/test_relay_jobs.py` ve `app/webapp/` (uygulama 0.14.1).
+- **Uyumluluk:** eski uygulama yeni alanları yok sayar; 0.14.1 uygulaması eski sunucuda logoyu yükleyemez (hata yazar), geri kalanı çalışır.
+
+**Yapılacak:** GitHub `Burcuri/rota-api` → `app/webapp` klasörünü sil (⋯ → *Delete directory*) → **Add file → Upload files** ile zip'in
+içindekileri yükle (`app/logos.py` dahil) → Render'ın kurmasını bekle → logda yukarıdaki üç `[şema]` satırı.
+**Deneme:** işveren Hesabım › İşletme Profili'nden logo yükler (turuncu uyarı kutusu görünür) → kurye İlanlar'da ilan kartında logoyu görür →
+`/yonetim` › **Logolar**'da logo listelenir; "Logoyu sil" → işveren uygulamayı yeniden açınca logo kalkar ve bildirim düşer.
+
+---
+
 # Sunucu güncellemesi — Dilim 15 · 0.14.0 (22 Ekim 2026) — sunucu 1.14.0
 
 **Python değişti: sürüm 1.14.0.** Ayrıntı: uygulama paketindeki `docs/DILIM-15.md`.

@@ -47,7 +47,7 @@ def test_job_without_addresses_and_no_phone_leak():
     assert r.status_code == 200, r.text
     j = r.json()
     assert j["packageCount"] == 3 and j["area"] == "Mahmutlar" and j["fee"] == 150 and j["packages"] is None
-    assert j["employer"] == {"id": emp_id, "name": "Burger Ev"}  # telefon YOK
+    assert j["employer"] == {"id": emp_id, "name": "Burger Ev", "logo": ""}  # telefon YOK (1.14.1: logo sürümü; yoksa boş)
     c, _ = user("courier")
     listed = [x for x in client.get("/v1/jobs/open", headers=auth(c)).json() if x["id"] == j["id"]]
     assert listed and "phone" not in listed[0]["employer"]

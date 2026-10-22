@@ -697,6 +697,33 @@ def make_router(keep_days_errors: float = 14, follow_keep_hours: float = 48) -> 
         db.commit()
         return {"ok": True}
 
+    # ------------------------------------------------------------------ logolar (1.14.1: profil fotoğrafı yok; yalnız işletme logosu)
+    @r.get("/v1/admin/logos")
+    def logo_list(before: str = "", limit: int = Query(default=60, ge=1, le=200), a: Admin = Depends(current_admin), db: Session = Depends(get_db)):
+        """Yüklenmiş işletme logoları (en yeni önce). Logo dışı resim (kişi fotoğrafı vb.) buradan silinir; uygulamada yüklerken bu uyarı yazar."""
+        qs = db.query(User).filter(User.logo.is_not(None))
+        b = parse_before(before)
+        if b is not None:
+            qs = qs.filter(User.logo_at < b)
+        rows = qs.order_by(User.logo_at.desc()).limit(limit).all()
+        return {"items": [{
+            "id": u.id, "userNo": u.public_no or "", "name": u.name, "role": u.active_role, "banned": bool(u.banned),
+            "at": iso(u.logo_at), "v": str(int(u.logo_at.timestamp())) if u.logo_at else "1",
+            "kb": round(len(u.logo or "") * 3 / 4 / 1024),
+        } for u in rows]}
+
+    @r.delete("/v1/admin/users/{uid_}/logo")
+    def logo_delete(uid_: str, request: Request, a: Admin = Depends(current_admin), db: Session = Depends(get_db)):
+        """Logoyu sil (logo değil / uygunsuz resim). Kullanıcının uygulaması bir sonraki açılışta telefondaki kopyayı da kaldırır ve bildirir."""
+        u = get_user(db, uid_)
+        if not u.logo:
+            return {"ok": True}
+        u.logo, u.logo_type, u.logo_at = None, None, None
+        audit(db, request, a, "logo_delete", "user", u.id, name=u.name)
+        events.log(db, "user.logo_deleted", u.id, by=a.username)
+        db.commit()
+        return {"ok": True}
+
     # ------------------------------------------------------------------ takipler (son 48 saat: iz + son ilerleme)
     def follow_row(f: Follow, names: dict[str, str]) -> dict:
         try:

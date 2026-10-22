@@ -52,6 +52,11 @@ class User(Base):
     # 1.14.0: kalıcı ÇALIŞMA BÖLGESİ (kullanıcı kararı 22 Ekim 2026) — JSON {"p": il, "d": ilçe, "h": [en çok 3 mahalle]}. Her girişte
     # yeniden yazılmasın, telefon ↔ web aynı olsun diye sunucuda. Kişinin kendi tercihidir; başkasına gösterilmez.
     work_area = Column(Text)
+    # 1.14.1: işletme LOGOSU (yalnız işveren / sponsor; kişilerde profil fotoğrafı yok, avatar var). base64 + gerçek tür + yükleme anı.
+    # Logo dışı resim yönetimce silinir (yönetim › Logolar).
+    logo = Column(Text)
+    logo_type = Column(String(16))
+    logo_at = Column(DateTime(timezone=True))
 
     jobs_posted = relationship("Job", back_populates="employer", foreign_keys="Job.employer_id")
 

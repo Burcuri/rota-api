@@ -46,6 +46,10 @@ ADD_COLUMNS = [
     # 1.14.0: kalıcı çalışma bölgesi (il, ilçe, en çok 3 mahalle) ve takibin bağlı olduğu görev no
     ("users", "work_area", "TEXT"),
     ("follows", "task_no", "VARCHAR(7)"),
+    # 1.14.1: işletme logosu
+    ("users", "logo", "TEXT"),
+    ("users", "logo_type", "VARCHAR(16)"),
+    ("users", "logo_at", "TIMESTAMP WITH TIME ZONE"),
 ]
 
 # create_all'un yeni kurulumda açtığı dizin adlarıyla aynı adlar (ix_<tablo>_<sütun>)
