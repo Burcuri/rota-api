@@ -711,6 +711,7 @@ def make_router(keep_days_errors: float = 14, follow_keep_hours: float = 48) -> 
             "createdAt": iso(f.created_at), "acceptedAt": iso(f.accepted_at), "endedAt": iso(f.ended_at),
             "done": len(pr.get("done") or []), "failed": len(pr.get("failed") or []), "total": int(pr.get("total") or 0),
             "trailN": int(f.trail_n or 0),
+            "taskNo": f.task_no or "",  # 1.14.0: takibin bağlı olduğu görev
         }
 
     @r.get("/v1/admin/follows")

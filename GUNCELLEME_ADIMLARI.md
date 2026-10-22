@@ -1,3 +1,30 @@
+# Sunucu güncellemesi — Dilim 15 · 0.14.0 (22 Ekim 2026) — sunucu 1.14.0
+
+**Python değişti: sürüm 1.14.0.** Ayrıntı: uygulama paketindeki `docs/DILIM-15.md`.
+- **"Adres Listesi Paylaş" — görev eşleşmesi (yeni `app/tasks.py`):** işveren listeyi / ilanı kuryeye paylaşınca görev açılır ve 7 haneli
+  **Görev No** verilir; kurye kabul edince aynı numarayla eşleşir. Bir ilan aynı anda TEK kuryeye; bir kuryenin aynı işletmeden tek açık
+  görevi olur. Uçlar: `POST /v1/tasks/share`, `POST /v1/tasks/{no}/accept|decline|end`, `GET /v1/tasks/mine`, `GET /v1/tasks/{no}`.
+  Görevde adres yok (yalnız başlık + adres sayısı). Açık görev 24 saatte kapanır; biten görev 48 saat sonra silinir.
+- **Önce paylaş, sonra takip (kullanıcı kararı):** `POST /v1/follow/request` artık yalnız EŞLEŞMİŞ görevi olan kuryeye gider (yoksa 409
+  "Önce adres listesini paylaş…"). Takip görev no'yu taşır (`taskNo`); görev biterse takip de biter; kurye "bitirdim" deyince görev de biter.
+- **İlanlar:** ilan kaldırılınca bağlı görev biter; bağlı ilan `GET /v1/jobs/open`'da başka kuryelere listelenmez; `GET /v1/jobs/mine`
+  (işveren) her ilanın görevini verir (`task`: kurye + Görev No + durum).
+- **Kalıcı çalışma bölgesi:** `POST /v1/me/work-area` (il, ilçe, en çok 3 mahalle); `/v1/me` ve giriş yanıtında `workArea`.
+- **Yeni tablo:** `tasks` (kendiliğinden açılır). **Yeni sütunlar:** `users.work_area`, `follows.task_no`.
+  **Beklenen log (yalnız ilk açılışta):** `[şema] users.work_area eklendi`, `[şema] follows.task_no eklendi`.
+- İsteğe bağlı ortam değişkenleri: `TASK_MAX_HOURS` (varsayılan 24), `TASK_KEEP_HOURS` (48). Yeni Python paketi YOK.
+- **Değişen dosyalar:** `app/tasks.py` (yeni), `app/follow.py`, `app/main.py`, `app/models.py`, `app/migrate.py`, `app/admin.py`
+  (takip satırında görev no), `tests/test_tasks.py`, `tests/test_work_area.py` (yeni), `tests/test_follow.py` ve `app/webapp/` (uygulama 0.14.0).
+- **Uyumluluk:** önce SUNUCUYU güncelle. 0.14.0 uygulaması eski sunucuda görevsiz eski akışla çalışır. Eski uygulama yeni sunucuda listeyi
+  görevsiz gönderir ama **canlı takip isteği eşleşmiş görev ister** → işletmeler de 0.14.0'a geçmeli.
+
+**Yapılacak:** GitHub `Burcuri/rota-api` → `app/webapp` klasörünü sil (⋯ → *Delete directory*) → **Add file → Upload files** ile zip'in
+içindekileri yükle (`app/tasks.py` dahil) → Render'ın kurmasını bekle → logda yukarıdaki iki `[şema]` satırı.
+**Deneme:** işveren Görevler'den bir listeyi kuryeye "📋 Adres Listesi Paylaş" ile verir → çıkan pencerede `GRV-xxxxxxx`; kurye sohbette aynı
+numarayı görür, "Adresleri kabul et" der → işverenin kartında "🔒 Eşleşti" ve "📍 Canlı takibe al".
+
+---
+
 # Sunucu güncellemesi — Dilim 14 · 0.13.1 (22 Ekim 2026) — sunucu 1.13.0
 
 **Python değişti (küçük): sürüm 1.13.0.** Takip yanıtında (`GET /v1/follow/mine`, `GET /v1/follow/{id}`) karşı tarafın `peer` nesnesine

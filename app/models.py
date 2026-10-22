@@ -49,6 +49,9 @@ class User(Base):
     vis_at = Column(DateTime(timezone=True))
     # Dilim 13 (0.12.9): benzersiz, değişmeyen 7 haneli kullanıcı no (örn. 8472019; ilk hane 0 olmaz). Eski satırlar açılışta doldurulur (migrate.py).
     public_no = Column(String(7), unique=True, index=True)
+    # 1.14.0: kalıcı ÇALIŞMA BÖLGESİ (kullanıcı kararı 22 Ekim 2026) — JSON {"p": il, "d": ilçe, "h": [en çok 3 mahalle]}. Her girişte
+    # yeniden yazılmasın, telefon ↔ web aynı olsun diye sunucuda. Kişinin kendi tercihidir; başkasına gösterilmez.
+    work_area = Column(Text)
 
     jobs_posted = relationship("Job", back_populates="employer", foreign_keys="Job.employer_id")
 
@@ -375,12 +378,45 @@ class Follow(Base):
     # İz seyreltme: son kaydedilen iz noktasının zamanı ve kayıtlı nokta sayısı
     trail_at = Column(DateTime(timezone=True))
     trail_n = Column(Integer, default=0)
+    # 1.14.0: takip, eşleşmiş bir GÖREVE bağlı başlar (önce "Adres Listesi Paylaş", sonra takip). Görev no burada da durur (iki tarafta aynı).
+    task_no = Column(String(7))
 
     __table_args__ = (
         # Bir kuryenin aynı anda tek aktif takibi (iki işletme aynı kuryeyi aynı anda izleyemez)
         Index("uq_follow_courier_active", "courier_id", unique=True, sqlite_where=text("status = 'active'"), postgresql_where=text("status = 'active'")),
         # Aynı işveren-kurye çifti için tek açık (bekleyen / aktif) kayıt: tekrarlanan istek yeni satır açmaz
         Index("uq_follow_open_pair", "employer_id", "courier_id", unique=True, sqlite_where=text("status IN ('asked','active')"), postgresql_where=text("status IN ('asked','active')")),
+    )
+
+
+class Task(Base):
+    """GÖREV EŞLEŞMESİ (1.14.0, kullanıcı kararı 22 Ekim 2026). İşveren "Adres Listesi Paylaş" dediği anda ilan (ya da liste) bir kuryeye
+    BAĞLANIR ve göreve özel benzersiz 7 haneli GÖREV NO verilir (uygulamada GRV-xxxxxxx). Kurye listeyi kabul edince aynı numarayla EŞLEŞİR
+    (matched): iki tarafta aynı numara, veri tutarlılığı. Kurallar: bir ilan / liste (`ref`) aynı anda TEK kuryeye bağlanır; bir kuryenin
+    aynı işverenden TEK açık görevi olur (teslimatlar bitmeden ikinci liste verilmez); canlı takip yalnız eşleşmiş görevle başlar.
+    Adres, alıcı adı, telefon YOK (adresler telefonlarda kalır): yalnız başlık ve adres sayısı. Biten görev 48 saat sonra silinir."""
+
+    __tablename__ = "tasks"
+    id = Column(String(32), primary_key=True, default=uid)
+    task_no = Column(String(7), unique=True, nullable=False, index=True)
+    employer_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    courier_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    job_id = Column(String(32), ForeignKey("jobs.id"), nullable=True, index=True)  # ilan üzerinden paylaşıldıysa
+    ref = Column(String(64), nullable=False)  # ilan kimliği ya da telefondaki listenin anahtarı ("L:<sekme>", "F:<dosya listesi>")
+    title = Column(String(160), nullable=False, default="")
+    count = Column(Integer, nullable=False, default=0)
+    status = Column(String(10), nullable=False, default="shared", index=True)  # shared | matched | ended
+    # declined | cancelled | stopped_courier | done | job_closed | ban
+    end_reason = Column(String(20), nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), default=now)
+    matched_at = Column(DateTime(timezone=True))
+    ended_at = Column(DateTime(timezone=True), index=True)
+
+    __table_args__ = (
+        # Bir ilan / liste aynı anda tek kuryeye bağlı
+        Index("uq_task_open_ref", "employer_id", "ref", unique=True, sqlite_where=text("status IN ('shared','matched')"), postgresql_where=text("status IN ('shared','matched')")),
+        # Bir kuryenin aynı işverenden tek açık görevi
+        Index("uq_task_open_pair", "employer_id", "courier_id", unique=True, sqlite_where=text("status IN ('shared','matched')"), postgresql_where=text("status IN ('shared','matched')")),
     )
 
 

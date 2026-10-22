@@ -3,6 +3,7 @@ yalnız takip sürerken görür; bitince canlı nokta silinir. İZ (seyreltilmi�
 48 saat saklanır (işveren, kurye ve yönetim görür), sonra silinir."""
 import json
 import re
+import uuid
 from datetime import timedelta
 
 import pytest
@@ -11,7 +12,8 @@ from fastapi.testclient import TestClient
 from app import events
 from app.db import SessionLocal
 from app.main import app, follow_router
-from app.models import Event, Follow, FollowPoint, User, now
+from app.models import Event, Follow, FollowPoint, Task, User, now
+from app.tasks import new_task_no
 
 from helpers import admin_login
 from test_auth_consent import auth, reg
@@ -62,7 +64,29 @@ def edit(fid, **kw):
         db.close()
 
 
+def bind(tok, cid):
+    """1.14.0: takip yalnız EŞLEŞMİŞ göreve bağlı açılır ("Adres Listesi Paylaş" + kuryenin kabulü). Bu dosyadaki testler takibin
+    kendisini dener; görev doğrudan veritabanına yazılır (paylaşma / kabul uçlarının testleri: test_tasks.py). Roller geçersizse
+    (kurye kuryeyi izlemeye çalışıyor vb.) görev yazılmaz: o testler takibin kendi rol kontrollerini dener."""
+    me = client.get("/v1/me", headers=auth(tok))
+    if me.status_code != 200:
+        return
+    eid = me.json()["id"]
+    db = SessionLocal()
+    try:
+        e, c = db.get(User, eid), db.get(User, cid)
+        if e is None or c is None or e.id == c.id or e.active_role != "employer" or c.active_role != "courier":
+            return
+        if db.query(Task.id).filter(Task.employer_id == e.id, Task.courier_id == c.id, Task.status.in_(("shared", "matched"))).first():
+            return
+        db.add(Task(task_no=new_task_no(db), employer_id=e.id, courier_id=c.id, ref=f"T:{uuid.uuid4().hex[:12]}", title="Deneme", count=3, status="matched", matched_at=now()))
+        db.commit()
+    finally:
+        db.close()
+
+
 def ask(tok, cid):
+    bind(tok, cid)
     return client.post("/v1/follow/request", json={"courierId": cid}, headers=auth(tok))
 
 
@@ -836,7 +860,7 @@ def test_events_and_lists_carry_no_coordinates():
     mine = [x for x in ev["items"] if x["kind"].startswith("follow.") and x["userId"] in (eid, cid)]
     assert any(x["kind"] == "follow.end" and x["meta"].get("reason") == "stopped_courier" for x in mine)
     for x in mine:
-        assert set(x["meta"]) <= {"reason", "was", "to"}
+        assert set(x["meta"]) <= {"reason", "was", "to", "task"}  # 1.14.0: istek olayında görev no (konum değil)
 
 
 def test_admin_lists_the_follows_and_opens_the_trail_with_an_audit_entry():

@@ -1,4 +1,6 @@
+import json
 import os
+import re
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -34,6 +36,7 @@ from .doors import make_router as make_doors_router
 from .admin import make_router as make_admin_router
 from .errors import make_router as make_errors_router
 from .follow import make_router as make_follow_router
+from .tasks import OPEN as TASK_OPEN, end_tasks_for_job, make_router as make_tasks_router, people_of as task_people
 from .nearby import make_router as make_nearby_router
 from .vehicle import make_router as make_vehicle_router, withdraw as vehicle_withdraw
 from .handoff import make_router as make_handoff_router
@@ -41,7 +44,7 @@ from .migrate import ensure_schema
 from .relay import make_router
 from .reviews import make_router as make_reviews_router
 from .webapp import make_web_router
-from .models import ConsentLog, Job, JobPackage, User, now, uid
+from .models import ConsentLog, Job, JobPackage, Task, User, now, uid
 from .userno import ensure_public_no, pick_no
 
 Base.metadata.create_all(bind=engine)
@@ -93,6 +96,9 @@ FOLLOW_STALE_MIN = float(os.getenv("FOLLOW_STALE_MIN", "30"))  # bu kadar dakika
 FOLLOW_COOLDOWN_MIN = float(os.getenv("FOLLOW_COOLDOWN_MIN", "10"))  # reddedilen isteğin aynı işverenden yeniden gelmesi için bekleme
 FOLLOW_TRAIL_SEC = float(os.getenv("FOLLOW_TRAIL_SEC", "15"))  # iz noktaları arasındaki en kısa süre (saniye)
 FOLLOW_TRAIL_MAX = int(os.getenv("FOLLOW_TRAIL_MAX", "4000"))  # bir takip için saklanan en çok iz noktası
+# Görev ("Adres Listesi Paylaş": ilan / liste tek kuryeye bağlanır, Görev No ile eşleşir; canlı takip yalnız eşleşmiş görevde)
+TASK_MAX_HOURS = float(os.getenv("TASK_MAX_HOURS", "24"))  # açık görev en çok bu kadar saat sürer (kabulden; kabul yoksa paylaşımdan)
+TASK_KEEP_HOURS = float(os.getenv("TASK_KEEP_HOURS", "48"))  # biten görev kaydı bu kadar saat saklanır, sonra silinir
 VEHICLE_VIEW_PER_MIN = int(os.getenv("VEHICLE_VIEW_PER_MIN", "90"))  # bir işletmenin dakikada bakabileceği kurye araç profili sayısı
 
 
@@ -101,6 +107,7 @@ async def lifespan(_app):
     relay_router.start_cleaner()  # ulaşmayan mesajları arka planda siler (Render ücretsizde zamanlanmış iş yok)
     threading.Thread(target=handoff_router.loop, name="handoff-purge", daemon=True).start()  # süresi dolan teslim bağlantılarını siler
     follow_router.start_cleaner()  # süresi dolan takipleri kapatır, eski konum noktalarını siler
+    tasks_router.start_cleaner()  # süresi dolan görevleri kapatır, biten görevleri 48 saat sonra siler
     threading.Thread(target=_housekeeping_loop, name="housekeeping", daemon=True).start()
     yield
 
@@ -122,7 +129,7 @@ def _housekeeping_loop():
             print("[temizlik] hata:", type(e).__name__, flush=True)
 
 
-app = FastAPI(title="Rota Asistan", version="1.13.0", lifespan=lifespan)
+app = FastAPI(title="Rota Asistan", version="1.14.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -180,6 +187,8 @@ app.include_router(handoff_router)
 app.include_router(make_reviews_router())
 follow_router = make_follow_router(FOLLOW_ASK_MIN, FOLLOW_MAX_HOURS, FOLLOW_KEEP_HOURS, FOLLOW_STALE_MIN, FOLLOW_COOLDOWN_MIN, FOLLOW_TRAIL_SEC, FOLLOW_TRAIL_MAX)
 app.include_router(follow_router)
+tasks_router = make_tasks_router(TASK_KEEP_HOURS, TASK_MAX_HOURS)
+app.include_router(tasks_router)
 nearby_router = make_nearby_router(VISIBLE_MIN, NUDGE_HOURLY, NUDGE_PAIR_MIN, NUDGE_KEEP_HOURS)
 app.include_router(nearby_router)
 vehicle_router = make_vehicle_router(VEHICLE_VIEW_PER_MIN)
@@ -335,7 +344,40 @@ def user_out(u: User) -> dict:
         "mapIcon": u.map_icon or "",
         # Benzersiz 7 haneli kullanıcı no (uygulamada KRY-/ISV-/SPN- önekiyle yazılır); eski hesapta henüz yoksa boş
         "userNo": u.public_no or "",
+        # 1.14.0: kalıcı çalışma bölgesi (il, ilçe, en çok 3 mahalle): her girişte yeniden sorulmaz, her telefonda aynı
+        "workArea": work_area_of(u),
     }
+
+
+WORK_HOODS_MAX = 3  # kullanıcı kuralı (22 Ekim 2026): en çok 3 mahalle
+_PLACE_CTRL_RE = re.compile(r"[\x00-\x1f\x7f]+")
+_PLACE_BAD_RE = re.compile(r"@|https?:|www\.|(?:\d[\s().+-]*){7,}", re.IGNORECASE)  # e-posta, bağlantı, telefon gibi görünen
+
+
+def clean_place(raw: object, field: str) -> str:
+    """Bölge adı: boşluk sadeleşir, en çok 60 karakter. Telefon / e-posta / bağlantı gibi görünen metin reddedilir."""
+    if not isinstance(raw, str):
+        return ""
+    t = re.sub(r"\s+", " ", _PLACE_CTRL_RE.sub(" ", raw)).strip()
+    if len(t) > 60:
+        raise HTTPException(400, f"{field} en fazla 60 karakter")
+    if t and _PLACE_BAD_RE.search(t):
+        raise HTTPException(400, f"{field} geçersiz")
+    return t
+
+
+def _tr_key(s: str) -> str:
+    return s.replace("I", "ı").replace("İ", "i").lower()
+
+
+def work_area_of(u: User) -> dict:
+    try:
+        d = json.loads(u.work_area or "{}")
+    except Exception:
+        d = {}
+    d = d if isinstance(d, dict) else {}
+    hoods = [h for h in (d.get("h") or []) if isinstance(h, str) and h][:WORK_HOODS_MAX]
+    return {"province": str(d.get("p") or ""), "district": str(d.get("d") or ""), "hoods": hoods}
 
 
 def consent_out(c: ConsentLog | None) -> dict:
@@ -607,6 +649,35 @@ def set_map_icon(body: MapIconIn, user: User = Depends(current_user), db: Sessio
     return {"icon": user.map_icon or ""}
 
 
+class WorkAreaIn(BaseModel):
+    province: str = Field(default="", max_length=200)
+    district: str = Field(default="", max_length=200)
+    hoods: list[str] = Field(default_factory=list, max_length=10)
+
+
+@app.post("/v1/me/work-area")
+def set_work_area(body: WorkAreaIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Kalıcı çalışma bölgesi: il, ilçe ve EN ÇOK 3 mahalle (işveren de kurye de). Sunucuda durur: her girişte ve her telefonda aynı.
+    Yeni liste / ilan açılırken uygulama bu mahalleleri tek dokunuşla seçtirir. Boş gönderilen alan bölgeyi temizler."""
+    province = clean_place(body.province, "İl")
+    district = clean_place(body.district, "İlçe")
+    hoods: list[str] = []
+    seen: set[str] = set()
+    for h in body.hoods:
+        t = clean_place(h, "Mahalle")
+        if t and _tr_key(t) not in seen:
+            seen.add(_tr_key(t))
+            hoods.append(t)
+    if len(hoods) > WORK_HOODS_MAX:
+        raise HTTPException(400, f"En çok {WORK_HOODS_MAX} mahalle seçilebilir")
+    if hoods and not district:
+        raise HTTPException(400, "Mahalle seçmeden önce ilçeyi seç")
+    user.work_area = json.dumps({"p": province, "d": district, "h": hoods}, ensure_ascii=False, separators=(",", ":")) if (province or district or hoods) else None
+    events.log(db, "user.workarea", user.id, n=len(hoods))
+    db.commit()
+    return {"workArea": work_area_of(user)}
+
+
 @app.get("/v1/me/findable")
 def get_findable(user: User = Depends(current_user)):
     return {"on": user.findable is not False}
@@ -770,8 +841,9 @@ def close_job(job_id: str, user: User = Depends(current_user), db: Session = Dep
     for p in list(job.packages):
         db.delete(p)
     events.log(db, "job.close", user.id, job.id)
+    ended = end_tasks_for_job(db, job.id, "job_closed", user.id)  # ilana bağlı görev (ve canlı takibi) de biter
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "tasksEnded": ended}
 
 
 @app.get("/v1/jobs/open")
@@ -781,6 +853,8 @@ def open_jobs(user: User = Depends(current_user), db: Session = Depends(get_db))
         .join(User, User.id == Job.employer_id)
         .filter(Job.status.in_(["open", "applied"] if ESKI_AKIS else ["open"]))
         .filter(User.banned.is_not(True))  # askıya alınmış işverenin ilanı listelenmez
+        # Bir kuryeye bağlanmış ilan (açık görevi var) başka kuryelere sunulmaz: bir ilan aynı anda tek kuryeye verilir
+        .filter(~db.query(Task.id).filter(Task.job_id == Job.id, Task.status.in_(TASK_OPEN)).exists())
         .order_by(Job.created_at.desc())
         .limit(80)
         .all()
@@ -792,6 +866,21 @@ def open_jobs(user: User = Depends(current_user), db: Session = Depends(get_db))
 def my_jobs(user: User = Depends(current_user), db: Session = Depends(get_db)):
     if user.active_role == "employer":
         rows = db.query(Job).filter(Job.employer_id == user.id, Job.status != "closed").order_by(Job.created_at.desc()).all()
+        # Her ilanın görevi: açık olan (bağlı kurye + Görev No) ya da son 48 saatte biten
+        ids = [j.id for j in rows]
+        tasks = db.query(Task).filter(Task.job_id.in_(ids)).order_by(Task.created_at.desc()).all() if ids else []
+        pick: dict[str, Task] = {}
+        for t in tasks:
+            cur = pick.get(t.job_id)
+            if cur is None or (cur.status not in TASK_OPEN and t.status in TASK_OPEN):
+                pick[t.job_id] = t
+        people = task_people(db, list(pick.values()))
+        def task_brief(t: Task | None) -> dict | None:
+            if t is None:
+                return None
+            c = people.get(t.courier_id) or {"id": t.courier_id, "name": "", "userNo": "", "icon": ""}
+            return {"taskNo": t.task_no, "status": t.status, "endReason": t.end_reason or "", "courier": c}
+        return [{**job_out(j, db), "task": task_brief(pick.get(j.id))} for j in rows]
     else:
         rows = (
             db.query(Job)

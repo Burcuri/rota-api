@@ -18,6 +18,9 @@ Kurallar (sunucu uygular; hepsi testli):
   ve not ASLA gelmez; telefon / e-posta / bağlantı gibi görünen etiket atılır. Kullanıcı kararı (12 Ekim 2026): şikayette "hangi kapıya
   ne zaman gidildi" bakılabilsin diye etiket de 48 saat saklanır; kimlikler ayrı, etiketler `progress.a` içinde durur.
 - Reddedilen istek FOLLOW_COOLDOWN_MIN (10 dk) içinde aynı işverenden yeniden gelmez; açık istek varken tekrar istek yeni satır açmaz.
+- 1.14.0 (kullanıcı kararı 22 Ekim 2026, "önce paylaş, sonra takip"): işveren takip iznini YALNIZ "Adres Listesi Paylaş" ile listesini
+  verdiği ve kuryenin KABUL ETTİĞİ (Görev No eşleşmiş) kuryeden ister (tasks.py). Takip o görevin numarasını taşır (task_no). Kurye
+  "bütün teslimatları bitirdim" deyince görev de biter; görev biterse (vazgeçme, ilan kaldırma, süre) bağlı takip de biter.
 """
 import json
 import re
@@ -37,7 +40,8 @@ from . import events
 from .auth import current_user
 from .db import SessionLocal, get_db
 from .limits import Window
-from .models import Follow, FollowPoint, User, now, uid
+from .models import Follow, FollowPoint, Task, User, now, uid
+from .tasks import OPEN as TASK_OPEN, end_task, end_tasks_for_pair, matched_task
 
 ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,40}$")
 MAX_IDS = 500
@@ -157,6 +161,23 @@ def drop_trail(db: Session, ids: list[str]) -> None:
         db.query(FollowPoint).filter(FollowPoint.follow_id.in_(ids[i:i + 500])).delete(synchronize_session=False)
 
 
+def end_follow(db: Session, f: Follow, reason: str, actor: str | None = None) -> None:
+    """Takibi kapatır; CANLI konumu SİLER (iz ve son ilerleme FOLLOW_KEEP_HOURS boyunca kalır). commit ETMEZ."""
+    if f.status == "ended":
+        return
+    was = f.status
+    f.status = "ended"
+    f.end_reason = reason
+    f.ended_at = now()
+    f.last_lat = f.last_lon = f.last_acc = None
+    f.last_at = None
+    # Bu satır tam bitirme anında yüklenmiş olabilir: o sırada başka bir istek yeni canlı nokta yazdıysa, "zaten boş" sanılan alanlar
+    # güncellemeye girmez ve nokta kalır. Bu yüzden silinen alanlar HER ZAMAN yazılır. (Son ilerleme ve iz silinmez.)
+    for col in ("last_lat", "last_lon", "last_acc", "last_at"):
+        flag_modified(f, col)
+    events.log(db, "follow.end", actor, f.id, reason=reason, was=was)
+
+
 def make_router(
     ask_min: float, max_hours: float, keep_hours: float, stale_min: float, cooldown_min: float, trail_sec: float = 15, trail_max: int = 4000
 ) -> APIRouter:
@@ -166,21 +187,7 @@ def make_router(
     trail_win = Window(60, 60)  # kullanıcı başına dakikada en çok 60 iz isteği
 
     # ------------------------------------------------------------------ iç işler
-    def end(db: Session, f: Follow, reason: str, actor: str | None = None) -> None:
-        """Takibi kapatır; CANLI konumu SİLER (iz ve son ilerleme FOLLOW_KEEP_HOURS boyunca kalır). commit ETMEZ."""
-        if f.status == "ended":
-            return
-        was = f.status
-        f.status = "ended"
-        f.end_reason = reason
-        f.ended_at = now()
-        f.last_lat = f.last_lon = f.last_acc = None
-        f.last_at = None
-        # Bu satır tam bitirme anında yüklenmiş olabilir: o sırada başka bir istek yeni canlı nokta yazdıysa, "zaten boş" sanılan alanlar
-        # güncellemeye girmez ve nokta kalır. Bu yüzden silinen alanlar HER ZAMAN yazılır. (Son ilerleme ve iz silinmez.)
-        for col in ("last_lat", "last_lon", "last_acc", "last_at"):
-            flag_modified(f, col)
-        events.log(db, "follow.end", actor, f.id, reason=reason, was=was)
+    end = end_follow
 
     def check(db: Session, f: Follow) -> bool:
         """Açık (bekleyen / aktif) takip hâlâ geçerli mi? Geçersizse kapatır (commit çağırana ait). True: geçerli."""
@@ -227,6 +234,7 @@ def make_router(
             "endedAt": _iso(f.ended_at),
             "expiresAt": _iso(f.expires_at),
             "trailN": int(f.trail_n or 0),
+            "taskNo": f.task_no or "",  # 1.14.0: takibin bağlı olduğu görev (GRV-xxxxxxx); eski takipte boş
         }
         if f.status == "active" or (f.status == "ended" and (f.progress or "")):
             o["progress"] = _progress_of(f)  # biten takibin SON ilerlemesi de 48 saat görünür
@@ -264,6 +272,11 @@ def make_router(
         if open_ is not None and check(db, open_):  # aynı kurye için açık kayıt: yeni satır açılmaz
             db.commit()
             return view(db, open_, user, existing=True)
+        # CANLI TAKİP ŞARTI (1.14.0): bu kuryeye "Adres Listesi Paylaş" ile liste verilmiş ve kurye KABUL etmiş olmalı (Görev No eşleşmiş)
+        task = matched_task(db, user.id, c.id)
+        if task is None:
+            db.commit()
+            raise HTTPException(409, "Önce adres listesini paylaş: kurye listeyi kabul edince (Görev No eşleşince) canlı takip açılır")
         cut = now() - timedelta(minutes=cooldown_min)
         if db.query(Follow.id).filter(Follow.employer_id == user.id, Follow.courier_id == c.id, Follow.end_reason == "declined", Follow.ended_at >= cut).first():
             db.commit()
@@ -275,9 +288,9 @@ def make_router(
         if not req_win.allow(user.id):
             db.commit()
             raise HTTPException(429, "Çok fazla takip isteği gönderdin; biraz bekle")
-        f = Follow(id=uid(), employer_id=user.id, courier_id=c.id, status="asked", expires_at=now() + timedelta(minutes=ask_min))
+        f = Follow(id=uid(), employer_id=user.id, courier_id=c.id, status="asked", expires_at=now() + timedelta(minutes=ask_min), task_no=task.task_no)
         db.add(f)
-        events.log(db, "follow.ask", user.id, f.id, to=c.id)
+        events.log(db, "follow.ask", user.id, f.id, to=c.id, task=task.task_no)
         try:
             db.commit()
         except IntegrityError:  # aynı anda başka istek açıldı
@@ -364,7 +377,14 @@ def make_router(
             else:
                 if b and b.progress is not None:
                     f.progress = json.dumps(_clean_progress(b.progress, _progress_of(f), now()), separators=(",", ":"))
-                end(db, f, "done" if (b and b.reason == "done") else "stopped_courier", user.id)
+                done = bool(b and b.reason == "done")
+                end(db, f, "done" if done else "stopped_courier", user.id)
+                if done:  # bütün teslimatlar bitti: takibin bağlı olduğu görev de biter (çift yeni liste alabilir)
+                    t = db.query(Task).filter(Task.task_no == f.task_no, Task.status.in_(TASK_OPEN)).first() if f.task_no else None
+                    if t is not None:
+                        end_task(db, t, "done", user.id)
+                    elif not f.task_no:
+                        end_tasks_for_pair(db, f.employer_id, f.courier_id, "done", user.id)
             db.commit()
         return view(db, f, user)
 
