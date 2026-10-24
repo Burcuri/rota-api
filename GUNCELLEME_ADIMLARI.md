@@ -1,3 +1,36 @@
+# Sunucu güncellemesi — Dilim 18 · 0.16.0 kamerayla adres okuma telefonun içinde (24 Ekim 2026)
+
+**Sunucu Python'u DEĞİŞMEDİ (sürüm yine 1.14.1).** Yeni tablo / sütun / ortam değişkeni / Python paketi YOK; logda yeni satır beklenmez.
+Değişen yalnız `app/webapp/` (web ikizi, uygulama 0.16.0: kişisel veri metni ve ayar açıklamaları güncellendi). Ayrıntı: uygulama
+paketindeki `docs/DILIM-18.md`.
+- **Kamerayla adres okuma artık telefonun içinde** (Android: Google ML Kit, iPhone: Apple Vision); etiket fotoğrafı hiçbir servise gitmez.
+  OCR.space kaldırıldı. Sunucuya fotoğraf zaten hiç gelmiyordu; burada değişen bir şey yok.
+- Web ikizinde kamerayla tarama yine YOK (kural aynı).
+
+**Yapılacak:** GitHub `Burcuri/rota-api` → `app/webapp` klasörünü sil (⋯ → *Delete directory*) → **Add file → Upload files** ile zip'in
+içindekileri yükle → Render'ın kurmasını bekle. Logda yeni satır beklenmez.
+**Deneme:** `/web` açılır; Hesabım › Gizlilik ve izinler › "Adres okuma (kamera → OCR)" açıklaması "telefonunun içinde okunur" der;
+Aydınlatma Metni'nde "KAMERAYLA ADRES OKUMA" maddesi var, "OCR.space" geçmez.
+
+---
+
+# Sunucu güncellemesi — Dilim 17 · 0.15.0 sesle yazma yalnız cihazda (23 Ekim 2026)
+
+**Sunucu Python'u DEĞİŞMEDİ (sürüm yine 1.14.1).** Yeni tablo / sütun / ortam değişkeni / Python paketi YOK; logda yeni satır beklenmez.
+Değişen yalnız `app/webapp/` (web ikizi, uygulama 0.15.0). Ayrıntı: uygulama paketindeki `docs/DILIM-17.md`.
+- **Web ikizinde sesle yazma yalnız Google Chrome 139+ ile**, ses bilgisayarda (Chrome'un cihaz içi Türkçe paketi) yazıya çevrilir; buluta gitmez.
+  Başka tarayıcıda uygulama normal açılır, 🎤'a dokununca nedenini söyler. "Sesle yazma" izni hâlâ varsayılan KAPALI (Hesabım › Gizlilik ve izinler).
+- Pakette ses anahtarı kalmadı (Groq / `EXPO_PUBLIC_STT_KEY` kalktı). Kamerayla adres okuma (OCR) bulutta aynen devam eder (telefonda).
+- Sunucuda yapılacak başka bir şey yok: eski uygulama / yeni uygulama ve sunucu sürümleri birbiriyle uyumlu.
+
+**Yapılacak:** GitHub `Burcuri/rota-api` → `app/webapp` klasörünü sil (⋯ → *Delete directory*) → **Add file → Upload files** ile zip'in
+içindekileri yükle → Render'ın kurmasını bekle. Logda yeni satır beklenmez.
+**Deneme:** bilgisayarda Chrome (139+) ile `/web` aç → Hesabım › Gizlilik ve izinler › Sesle yazma AÇ → yeni adres formunda 🎤'a dokun; ilk seferde
+"Türkçe ses paketi indirilsin mi?" sorulur (~60 MB, bir kez) → konuş, tekrar dokun, söylediğin yazıya düşer. Edge / Firefox'ta 🎤'a dokununca
+"yalnızca Google Chrome'da çalışır" yazar.
+
+---
+
 # Sunucu güncellemesi — Dilim 16 · 0.14.1 (22 Ekim 2026) — sunucu 1.14.1
 
 **Python değişti (küçük): sürüm 1.14.1.** Ayrıntı: uygulama paketindeki `docs/DILIM-16.md`.
