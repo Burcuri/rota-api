@@ -5,3 +5,5 @@ psycopg2-binary==2.9.10
 PyJWT==2.10.1
 pydantic==2.11.3
 python-multipart==0.0.20
+# 1.18.0: alıcıya tarayıcı bildirimi (Web Push şifrelemesi + VAPID imzası)
+cryptography==50.0.1

@@ -1,3 +1,242 @@
+# Sunucu güncellemesi — Dilim 27 · 0.24.0 konum "Kullanırken", kapı haritası (1 Kasım 2026) — sunucu 1.21.0
+
+**Dilim 26'yı henüz yüklemediysen doğrudan bunu yükle** (bu zip öncekilerin hepsini içerir). Python değişti: sürüm 1.21.0; yeni tablo,
+sütun, paket, anahtar YOK. Ayrıntı: uygulama paketindeki `docs/DILIM-27.md`.
+- **Yönetim › Kapı haritası** (kullanıcı isteği 1 Kasım): ortak kapı katmanının önizlemesi — il › ilçe › mahalle › sokak kırılımı,
+  haritada doğrulanmış / bekleyen / tartışmalı noktalar, nokta ayrıntısı, yanlış noktayı silme, CSV indirme. Yeni dosya `app/doormap.py`;
+  uçlar yalnız yönetici oturumuyla. Silme ve indirme işlem günlüğüne yazılır (adres yazılmaz).
+- `/gizlilik` metni "CANLI TAKİP" maddesindeki değişiklikle yenilendi; `/destek` SSS'si "Rota Her zaman izni istemez" diyor.
+- `app/webapp/` (web ikizi 0.24.0) yenilendi.
+
+**Yapılacak:** GitHub `Burcuri/rota-api` → zip'in tamamını yükle (değişenler: `app/main.py`, yeni `app/doormap.py`, `app/static/`
+içinde `yonetim.html`, `yonetim.js`, `yonetim.css`, `gizlilik.html`, `kosullar.html`, `destek.html`, `yasal.css`, `app/webapp/`
+klasörü (önce eskisini sil), `tests/`) → Render'ın kurmasını bekle → `/yonetim` › **Kapı haritası** açılıyor mu, `/gizlilik` ve
+`/destek` açılıyor mu bak.
+
+---
+
+# Sunucu güncellemesi — Dilim 26 · 0.23.1 mağaza hazırlığı (31 Ekim 2026) — sunucu 1.20.1
+
+**Python değişti (az): sürüm 1.20.1.** Yeni tablo, sütun, paket YOK. Ayrıntı: uygulama paketindeki `docs/DILIM-26.md`.
+- **Yeni herkese açık sayfalar** (mağaza formlarındaki adresler):
+  - `/gizlilik` — gizlilik politikası (aydınlatma metni, TR + EN). Play Console ve App Store Connect › gizlilik politikası adresi.
+  - `/kosullar` — kullanım koşulları (TR + EN).
+  - `/destek` — destek sayfası (App Store › destek adresi). E-posta satırı aşağıdaki ayardan gelir.
+  - Metinler uygulamadakiyle aynı (taslak işaretiyle); avukat onaylı metin gelince birlikte yenilenir.
+- **Yeni uç:** `GET /v1/support` → `{"email": …}`. Uygulamanın Yardım ekranı destek e-postasını buradan okur (adres değişince uygulama
+  yeniden derlenmez).
+- **İsteğe bağlı yeni ayar — `DESTEK_EPOSTA`** (Render › Environment): herkese görünecek destek e-postası. Gizli DEĞİL ama koda / zip'e
+  yazılmaz; yalnız Render'da durur. Yoksa sayfada "Destek e-postası yakında" yazar. App Store'a göndermeden önce yaz.
+- `app/webapp/` (web ikizi 0.23.1) yenilendi.
+
+**Yapılacak:** GitHub `Burcuri/rota-api` → zip'teki **`app/main.py`**, **`app/static/`** içindeki yeni dosyalar (`gizlilik.html`,
+`kosullar.html`, `destek.html`, `yasal.css`), **`app/webapp/`** klasörü (önce eskisini sil) ve **`tests/test_public_pages.py`** →
+Render'ın kurmasını bekle → tarayıcıda `https://<render-adresin>/gizlilik` ve `/destek` açılıyor mu bak. (İstersen zip'in tamamını
+yükleyebilirsin.)
+
+---
+
+# Sunucu güncellemesi — Dilim 25 · 0.23.0 açılış izinleri ve arka planda canlı takip (30 Ekim 2026) — sunucu 1.20.0 (AYNI)
+
+**Python DEĞİŞMEDİ** (sürüm 1.20.0 kaldı; yeni tablo, sütun, paket, anahtar YOK). Yalnız **`app/webapp/`** (web ikizi 0.23.0) yenilendi.
+Ayrıntı: uygulama paketindeki `docs/DILIM-25.md`.
+- Arka planda canlı takip var olan uçla çalışır (`POST /v1/follow/{id}/ping`, takip başına dakikada 40 sınırı; uygulama en sık 20 sn'de bir
+  gönderir). Dilim 24'ü (1.20.0) yüklemediysen önce onu yükle.
+
+**Yapılacak:** GitHub `Burcuri/rota-api` → `app/webapp` klasörünü sil (⋯ → *Delete directory*) → **Add file → Upload files** ile zip'teki
+`app/webapp` klasörünü yükle (başka dosya değişmedi; istersen zip'in tamamını yükleyebilirsin) → Render'ın kurmasını bekle.
+
+---
+
+# Sunucu güncellemesi — Dilim 24 · 0.22.0 hesap güvenliği ve kilit ekranı (29–30 Ekim 2026) — sunucu 1.20.0
+
+**Python değişti: sürüm 1.20.0.** Ayrıntı: uygulama paketindeki `docs/DILIM-24.md`.
+- **Kullanıcı isteği (29 Ekim):** "hesap güvenliğini ve kilit ekranı yap" (iş listesi 7. ve 6. madde). Kilit ekranı tamamen TELEFONDA
+  (sunucuya bir şey gelmez); sunucudaki iş hesap güvenliği:
+  - **Giriş kilidi:** aynı hesaba 5 yanlış şifrede 15 dk, 10'da 1 sa, 15'te 6 sa, 20'de 24 sa; aynı ağdan (IP) 15 dakikada en çok 50 yanlış.
+    Kilitlenince kişiye uygulama içi duyuru, yönetimde "KİLİTLİ" + "Kilidi aç".
+  - **Şifremi unuttum** (`POST /v1/auth/forgot`, `POST /v1/auth/reset`): 6 haneli kod DOĞRULANMIŞ e-postaya, yoksa telefona (SMS). Kod
+    15 dk geçerli, 5 deneme, 60 sn'de bir yeniden, saatte 5.
+  - **E-posta / telefon doğrulama, telefon numarası değiştirme** (`/v1/me/email/send|verify`, `/v1/me/phone/send|verify`,
+    `/v1/me/phone/change`, `/v1/me/phone/change/verify`), **diğer oturumları kapat** (`POST /v1/me/sessions/revoke`).
+  - **Hesabı silme** (`POST /v1/me/delete`, şifre + onay): kişisel bilgiler silinir, hesap satırı "Silinmiş üye" olarak anonimleşir;
+    bekleyen ödül talepleri iptal (kuryeye puan iadesi), ilanlar kapanır, henüz ulaşmamış mesajları silinir, ortak kapı haritasındaki
+    oyları kişiye bağlanamaz olur (doors.anonymize_reporter'ın yaptığı). Kara listedeki hesapta telefonun geri çevrilemez özeti kalır
+    (aynı numarayla yeni hesap açılınca kara liste notu geri gelir).
+  - **Tarayıcıda hesap silme sayfası `/hesap-sil`** — Google Play "hesap silme bağlantısı" zorunluluğu için: Play Console › Uygulama
+    içeriği › Veri güvenliği › hesap silme URL'si = `https://<render-adresin>/hesap-sil`.
+  - **SMS / e-posta servisi bağlı değilken (DENEME MODU):** kod kişiye gitmez; **Yönetim › Kodlar**'da görünür. Kişi destekten ister,
+    kimliğini doğruladıktan sonra kodu söylersin ("Kodu göster" → "Evet"; her açış işlem günlüğüne yazılır).
+- **Yeni dosyalar:** `app/security.py`, `app/static/hesap-sil.html`, `hesap-sil.css`, `hesap-sil.js`, `tests/test_security.py`.
+- **Değişen:** `app/main.py`, `app/auth.py`, `app/admin.py`, `app/models.py`, `app/migrate.py`, `app/notify.py` (Brevo), `app/events.py`,
+  `app/pushes.py`, `app/relay.py`, `app/marks.py`, `app/static/yonetim.html|js|css` (Kodlar sekmesi, üye güvenliği), `tests/conftest.py`
+  ve `app/webapp/` (uygulama 0.22.0).
+- **Yeni tablolar (kendiliğinden açılır):** `auth_codes`, `auth_throttle`. **Yeni sütunlar** — Render logunda dört satır görmelisin:
+  `[şema] users.email_verified_at eklendi`, `[şema] users.phone_verified_at eklendi`, `[şema] users.deleted_at eklendi`,
+  `[şema] users.phone_hash eklendi`. **Yeni Python paketi YOK.**
+- **İsteğe bağlı ortam değişkenleri (yalnız Render › Environment; zip'e / GitHub'a / sohbete KONMAZ):**
+  - `BREVO_API_KEY` + `MAIL_FROM` (+ `MAIL_FROM_NAME`, yoksa "Rota"): kodlar e-postayla gider. Brevo ücretsiz planı günde 300 e-posta;
+    Render'ın ücretsiz planında da çalışır (HTTPS). Kurulum: brevo.com'da hesap aç → *Senders* bölümünde gönderici adresini ekle ve
+    doğrula → *SMTP & API › API keys* → yeni anahtar → Render'a `BREVO_API_KEY` ve `MAIL_FROM` (doğruladığın adres) olarak yaz.
+  - `LOGIN_IP_FAIL_MAX` (varsayılan 50; aynı ağdan 15 dakikada yanlış şifre tavanı), `SMS_DAILY_MAX` (varsayılan 300; SMS ücretli
+    olunca günlük toplam tavan). Hiçbiri yazılmazsa varsayılanlar geçerli.
+  - SMS servisi hâlâ bağlı değil (kullanıcı kararı: para gerektiriyor) → telefon kodları Yönetim › Kodlar'da.
+- **Uyumluluk:** önce SUNUCUYU güncelle. 0.22.0 uygulaması eski sunucuda bu ekranları açar ama "Bu özellik sunucu güncellenince (1.20.0)
+  çalışır" der; giriş ve diğer her şey çalışır. Eski uygulama yeni sunucuda eskisi gibi çalışır (giriş kilidi orada da geçerli).
+
+**Yapılacak:** GitHub `Burcuri/rota-api` → `app/webapp` klasörünü sil (⋯ → *Delete directory*) → **Add file → Upload files** ile zip'in
+içindekileri yükle (`app/security.py`, `app/static/hesap-sil.*` dahil) → Render'ın kurmasını bekle → logda yukarıdaki dört `[şema]` satırı.
+**Deneme (hemen, telefonda Expo Go ile de):** giriş ekranında "Şifremi unuttum" → telefonunu yaz → kod Yönetim › Kodlar'da → kodu ve
+yeni şifreyi yaz. Yanlış şifreyi 5 kez dene → "Giriş kapalı — Çok fazla yanlış şifre denendi…" → Yönetim › Üyeler › üye › "Kilidi aç".
+Tarayıcıda `https://<render-adresin>/hesap-sil` sayfasını aç (bir deneme hesabıyla sil).
+
+---
+
+# Sunucu güncellemesi — Dilim 23 · 0.21.0 kurye ve işletme telefonuna bildirim (29 Ekim 2026) — sunucu 1.19.0
+
+**Python değişti: sürüm 1.19.0.** Ayrıntı: uygulama paketindeki `docs/DILIM-23.md`.
+- **Kullanıcı isteği (29 Ekim 00:39):** "kurye ve işletme telefonuna bildirim (uygulamaya push) … WhatsApp'la ücretsiz yapılabilir mi".
+  WhatsApp'tan otomatik bildirim ÜCRETLİ (Meta mesaj başı ücret alıyor) → ÜCRETSİZ yol: telefonda Expo bildirim servisi (Android: Google
+  FCM, iPhone: Apple APNs), web ikizinde tarayıcı bildirimi (1.18.0'daki `webpush.py`).
+- **Yeni dosya `app/pushes.py`:** `POST /v1/me/push` (cihazı kaydet), `POST /v1/me/push/off` (bu cihazda kapat), `POST /v1/me/push/test`
+  (deneme, saatte 5), `GET /v1/push/key`. Olaylar: yeni mesaj, adres listesi paylaşıldı / kabul / ret, canlı takip isteği / kabul, haritada
+  selam, çalışma bölgesinde yeni ilan (kurye), alıcı "Paketimi aldım" / kapıyı işaretledi, paket teslim edildi (işletme), ödül / coin /
+  yönetim duyuruları. **Bildirim metninde kişisel bilgi YOK** ("📩 Yeni mesajınız var"). Tercihler, sessiz saatler, hafta sonu, resmî
+  tatil sunucuda (Türkiye saati); aynı kaynaktan art arda gelenler birleşir.
+- **Değişen:** `app/relay.py` (mesaj → bildirim; çıkışta cihazın bildirim kaydı da silinir), `app/tasks.py`, `app/follow.py`,
+  `app/handoff.py`, `app/nearby.py`, `app/main.py` (yeni ilan → bölgedeki kuryeler), `app/models.py`, `app/events.py`, `app/webapp.py`
+  (`GET /web/rota-sw.js`, `GET /web/manifest.webmanifest`; index.html'e ana ekran bilgisi — iPhone'da web ikizine bildirim için ana ekrana
+  eklemek şart), yeni `app/static/web-sw.js`, `tests/test_pushes.py` (yeni), `tests/test_webapp.py` ve `app/webapp/` (uygulama 0.21.0).
+- **Yeni tablo (kendiliğinden açılır):** `user_push`. **Yeni sütun YOK** (logda `[şema]` satırı çıkmaz). **Yeni Python paketi YOK.**
+- **Anahtar GEREKMEZ.** İsteğe bağlı: `EXPO_ACCESS_TOKEN` — yalnız expo.dev'de "Enhanced push security" açılırsa (yalnız Render ortamına).
+- **Uyumluluk:** önce SUNUCUYU güncelle. 0.21.0 uygulaması eski sunucuda bildirimi açamaz ("Sunucuya ulaşılamadı"), başka her şey çalışır.
+  Eski uygulama yeni sunucuda eskisi gibi çalışır (bildirim yok).
+
+**Yapılacak:** GitHub `Burcuri/rota-api` → `app/webapp` klasörünü sil (⋯ → *Delete directory*) → **Add file → Upload files** ile zip'in
+içindekileri yükle (`app/pushes.py`, `app/static/web-sw.js` dahil) → Render'ın kurmasını bekle.
+**Deneme (web ikizi, hemen):** bilgisayarda Chrome'da web ikizine gir → "🔔 Bildirimler" penceresi → İzin ver → Hesabım › Bildirimler ›
+"Deneme bildirimi gönder". Başka hesaptan mesaj at, web ikizi sekmesi arkadayken → "📩 Yeni mesajınız var".
+**Telefon için (bir kez):** `docs/DILIM-23.md` › "Telefonda bildirim kurulumu" (EAS proje kimliği, Firebase `google-services.json`, FCM V1
+anahtarı yalnız EAS'a, iPhone'da ilk derlemede "Push Notifications" evet). Expo Go'da bildirim çalışmaz.
+
+---
+
+# Sunucu güncellemesi — Dilim 22 · 0.20.0 alıcıya süreç takibi (28 Ekim 2026) — sunucu 1.18.0
+
+**Python değişti: sürüm 1.18.0.** Ayrıntı: uygulama paketindeki `docs/DILIM-22.md`.
+- **Kullanıcı isteği (28 Ekim 20:15, iş listesi 4. madde):** alıcı sayfasında Migros'taki gibi üç parçalı çubuk (Hazırlanıyor → Yolda →
+  Teslim edildi); web ikizinde "📦 Yola çıktı"; alıcı izin verirse tarayıcı bildirimi "Kargonuz yolda" (Android'de hemen, iPhone'da sayfa
+  ana ekrana eklenince).
+- **Yeni dosya `app/webpush.py`:** tarayıcı bildirimi (RFC 8291 şifreleme + RFC 8292 VAPID). Sunucu kimliği SECRET_KEY'den türetilir:
+  **yeni anahtar / ortam değişkeni GEREKMEZ** (isteğe bağlı: `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`). İstek yalnız Google FCM, Mozilla, Apple,
+  Microsoft bildirim servislerine gider. `PUSH_TEST_ENDPOINT_PREFIX` YALNIZ yerel deneme içindir, Render'a YAZILMAZ.
+- **Değişen:** `app/handoff.py` (aşama, işveren kaydı, açık görevle kuryenin kayda bağlanması, `POST /v1/handoffs/{id}/depart`,
+  `POST /v1/handoffs/done`, `GET /v1/handoffs/{id}/link?purpose=depart`; alıcı: `POST /a/{kod}/push`, `POST /a/{kod}/push/off`,
+  `GET /a/{kod}/manifest.webmanifest`, `GET /a/sw.js`), `app/models.py`, `app/migrate.py`, `app/events.py`, `app/main.py`,
+  `app/static/alici.html` + `alici.js?v=4` + `alici.css?v=5`, yeni `app/static/alici-sw.js` ve simgeler (`alici-180.png`, `alici-192.png`,
+  `alici-512.png`, `alici-maskable-512.png`, `alici-badge.png`), `tests/test_handoff_track.py` (yeni), `tests/test_handoff.py` ve
+  `app/webapp/` (uygulama 0.20.0).
+- **Yeni Python paketi:** `cryptography==50.0.1` (`requirements.txt`'e eklendi; Render kurulumda kendisi yükler).
+- **Yeni tablo (kendiliğinden açılır):** `handoff_push`. **Yeni sütunlar:** logda bir kez **`[şema] handoffs.employer_id eklendi`**,
+  **`[şema] handoffs.departed_at eklendi`**, **`[şema] handoffs.delivered_at eklendi`** görünür.
+- **Uyumluluk:** önce SUNUCUYU güncelle. 0.20.0 uygulaması eski sunucuda "📦 Yola çıktı"da hata verir. Eski uygulama yeni sunucuda
+  eskisi gibi çalışır (alıcı sayfası çubuğu kuryenin açtığı bağlantıda "Yolda"dan başlar).
+
+**Yapılacak:** GitHub `Burcuri/rota-api` → `app/webapp` klasörünü sil (⋯ → *Delete directory*) → **Add file → Upload files** ile zip'in
+içindekileri yükle (`app/webpush.py`, `app/static/alici-sw.js` ve yeni `.png` simgeler, `requirements.txt` dahil) → Render'ın kurmasını
+bekle → logda üç `[şema] handoffs.… eklendi` satırı.
+**Deneme:** Web ikizinde İş Listesi › Sırada › bir kartta "📦 Yola çıktı" → "Bağlantıyı alıcıya ilet" → WhatsApp. Bağlantıyı Android
+telefonda aç → "🔔 Yola çıkınca bildirim al" → izin ver. Başka bir adreste önce bağlantıyı aç + bildirimi aç, sonra web ikizinde
+"📦 Yola çıktı" → telefona "Kargonuz yolda" bildirimi. iPhone: Safari › Paylaş › Ana Ekrana Ekle → "Kargom" simgesinden aç → bildirim al.
+
+---
+
+# Sunucu güncellemesi — Dilim 21 · 0.19.0 hesap verisi sunucuda tek kaynak (28 Ekim 2026) — sunucu 1.17.0
+
+**Python değişti: sürüm 1.17.0.** Ayrıntı: uygulama paketindeki `docs/DILIM-21.md`.
+- **Kullanıcı kararları (28 Ekim 01:07, 01:35):** sunucu hesap başına TEK KAYNAK (online olunca telefon ve web ikizi kendiliğinden güncellenir);
+  reklam deposu kesinlikle online; IBAN / ödeme bilgisi yok; rehber telefonda + isteğe bağlı 24 saatlik yedek (24 saat sonra silinir).
+- **Yeni dosya `app/account.py`:** `GET /v1/account?since=…` (eşitleme saati: yalnız değişenler + `me`), `PUT /v1/account/docs/{bölüm}`
+  (son düzenlenen geçerli), `GET /v1/coins`, `POST /v1/coins/test-buy`, `GET /v1/ads/mine`, `POST /v1/ads`, `DELETE /v1/ads/{id}`,
+  `GET /v1/ads/active` (kuryenin haritası), `POST /v1/jobs/{id}/promote`, `GET|PUT|DELETE /v1/me/guide-backup`. Yönetim:
+  `GET|POST /v1/admin/users/{id}/coins`, `GET /v1/admin/ads`, `DELETE /v1/admin/ads/{id}`. 10 dakikada bir temizlik (24 saati dolan
+  rehber yedekleri, çok eski reklam kayıtları).
+- **Değişen:** `app/main.py` (`POST /v1/jobs` › `promote`, ilanda `promotedUntil`, öne çıkan ilan listede başta), `app/models.py`,
+  `app/migrate.py`, `app/events.py`, `app/static/yonetim.js` + `yonetim.html` (`yonetim.js?v=11`: yeni **Reklamlar** sekmesi, üye
+  ayrıntısında **Rota coin ve reklamlar** kutusu), `tests/test_account.py` (yeni) ve `app/webapp/` (uygulama 0.19.0).
+- **Yeni tablolar (kendiliğinden açılır):** `account_state`, `account_docs`, `coin_entries`, `ad_bookings`, `guide_backups`.
+  **Yeni sütun:** `jobs.promoted_until` → logda bir kez **`[şema] jobs.promoted_until eklendi`** görünür.
+- **İsteğe bağlı ortam değişkeni:** `COIN_TEST_BUY` (varsayılan açık; `0` yazılırsa test satın alma kapanır — yayında mağaza bağlanınca).
+  Rehber yedeğinin 24 saati sabittir (ortam değişkeni yok). Yeni Python paketi YOK.
+- **Uyumluluk:** önce SUNUCUYU güncelle. 0.19.0 uygulaması eski sunucuda eşitleyemez (coin / reklam "sunucuya ulaşılamadı" der). Eski
+  uygulama yeni sunucuda eskisi gibi çalışır (coin ve reklamı telefonda tutar).
+
+**Yapılacak:** GitHub `Burcuri/rota-api` → `app/webapp` klasörünü sil (⋯ → *Delete directory*) → **Add file → Upload files** ile zip'in
+içindekileri yükle (`app/account.py` dahil) → Render'ın kurmasını bekle → logda `[şema] jobs.promoted_until eklendi`.
+**Deneme:** `/yonetim` › yeni **Reklamlar** sekmesi açılır. Telefonda işletme profilini kaydet → bilgisayarda web ikizinde aynı profil.
+Rehberim › "24 saat yedekle" → başka cihazda girişte "Rehber yedeğin var" sorusu.
+
+---
+
+# Sunucu güncellemesi — Dilim 20 · 0.18.0 görünürlük ödülü ve kara liste (27 Ekim 2026) — sunucu 1.16.0
+
+**Python değişti: sürüm 1.16.0.** Ayrıntı: uygulama paketindeki `docs/DILIM-20.md`.
+- **Kullanıcı kararı (27 Ekim 19:42):** reklam ile hediye bağlanmaz (reklam her zaman peşin coin). Ödül koyanı ödüllendirmenin yolu
+  GÖRÜNÜRLÜK: "✓ Güvenilir" (kendiliğinden: 3+ kargo, %90+ zamanında, memnuniyet 4+) ve "⭐ Öne çıkan" (yönetim verir) üst sırada, rozetli.
+  Düzensiz (90 günde 2 geç kargo ya da 2 "gelmedi" ya da memnuniyet 2,5 altı) → ödülleri katalogdan iner, yenisi konamaz; yönetim "Affet"
+  ile geri açar. **Kara liste** (not zorunlu, yalnız yönetim görür): kurye ödül alamaz; sponsor / işveren ödül koyamaz, ödülleri görünmez.
+- **Yeni dosyalar:** `app/standing.py` (karne ve kurallar), `app/marks.py` — `GET /v1/admin/rewards/owners?view=…`,
+  `POST /v1/admin/users/{id}/feature`, `POST /v1/admin/users/{id}/pardon`, `GET|POST /v1/admin/blacklist`, `DELETE /v1/admin/blacklist/{id}`,
+  `PUT /v1/admin/users/{id}/note`.
+- **Değişen:** `app/points.py` (katalog sırası + gizleme, rozet, karne `GET /v1/rewards/mine` › `standing`, kara liste engelleri,
+  `GET /v1/points/me` › `rewardsBlocked`), `app/admin.py` (Üyeler: `banned=bl` süzgeci, ayrıntıda `mark` + `standing`), `app/models.py`,
+  `app/main.py`, `app/static/yonetim.js` + `yonetim.html` (`yonetim.js?v=10`: yeni **Kara liste** sekmesi, Ödüller'de karne süzgeci ve
+  düğmeler), `tests/test_standing.py` (yeni) ve `app/webapp/` (uygulama 0.18.0).
+- **Yeni tablo (kendiliğinden açılır):** `user_marks`. Yeni sütun YOK → logda `[şema]` satırı beklenmez. Yeni ortam değişkeni ve Python
+  paketi YOK.
+- **Uyumluluk:** önce SUNUCUYU güncelle. 0.18.0 uygulaması eski sunucuda çalışır ama rozet / karne görünmez. Eski uygulama yeni sunucuda
+  eskisi gibi çalışır (kara listedeki kurye "Al" deyince sunucu "durduruldu" der).
+
+**Yapılacak:** GitHub `Burcuri/rota-api` → `app/webapp` klasörünü sil (⋯ → *Delete directory*) → **Add file → Upload files** ile zip'in
+içindekileri yükle (`app/standing.py` ve `app/marks.py` dahil) → Render'ın kurmasını bekle. Logda yeni satır beklenmez.
+**Deneme:** `/yonetim` › yeni **Kara liste** sekmesi açılır; bir üyeyi kullanıcı no (ör. `SPN-1234567`) ya da telefonla, not yazarak
+ekle → Üyeler'de "Kara liste" rozeti. Ödüller › "Sponsor / işyeri karnesi" süzgecinde "⭐ Öne çıkar 7 gün" → o sponsorun ödülü kuryenin
+kataloğunda en üstte "⭐ Öne çıkan".
+
+---
+
+# Sunucu güncellemesi — Dilim 19 · 0.17.0 puan ve ödül sunucuda (27 Ekim 2026) — sunucu 1.15.0
+
+**Python değişti: sürüm 1.15.0.** Ayrıntı: uygulama paketindeki `docs/DILIM-19.md`.
+- **Kullanıcı kararları (26 Ekim 21:12, 27 Ekim 00:13):** puan, seviye, rozet ve ödül SUNUCUDA. Doğrulanmış her teslim 10 puan (alıcı
+  "Paketimi aldım" ya da kapıda GPS ≤50 m); günde en çok 600; aynı adrese aynı gün tek puan; km puanı yok; kullanılmayan puan 12 ayda düşer.
+  1 puan = 0,10 TL; basamaklar 1000 / 2000 / 3000 / 5000; ürün değeri basamağın TL karşılığının %80–%150'si (3000 → 240–450 TL). Ödül kargoyla: 7 gün içinde kargo (yoksa puan iade),
+  kurye "Aldım" (1–5 yıldız) ya da "Gelmedi" (yönetime), 14 gün cevap yoksa alındı. Kargo adresi yalnız ödülü koyana; talep kapanınca silinir.
+- **Yeni dosya `app/points.py`:** `POST /v1/points/delivery`, `GET /v1/points/me`, `GET|POST /v1/rewards`, `GET /v1/rewards/mine`,
+  `DELETE /v1/rewards/{id}`, `POST /v1/rewards/{id}/claim`, `GET /v1/rewards/claims/mine|owner`, `POST /v1/rewards/claims/{id}/ship|answer|cancel`,
+  `GET /v1/notices`, `POST /v1/notices/ack`. Yönetim: `GET /v1/admin/rewards/claims`, `POST /v1/admin/rewards/claims/{id}/resolve`,
+  `GET /v1/admin/rewards/scorecards`, `GET /v1/admin/points/watch`, `GET|POST /v1/admin/users/{id}/points`. 10 dakikada bir temizlik
+  (geciken kargo iadesi, 14 gün sonra alındı sayma, adres silme, 30 günlük teslim kayıtları ve bildirimler, 12 ay puan düşmesi).
+- **Alıcı onayı:** `app/handoff.py` — alıcı "Paketimi aldım" deyince kurye o durağı daha önce doğrulanamadan bildirmişse şimdi puan alır.
+- **Yönetim paneli:** yeni **Ödüller** sekmesi (talepler + "Puanı iade et" / "Teslim alındı say", sponsor / işyeri karnesi, şüpheli puanlar +
+  "Puanı düzelt"); işlem günlüğünde "Ödül talebini sonuçlandırdı", "Puan düzeltmesi yaptı". (`yonetim.js?v=9`)
+- **Yeni tablolar (kendiliğinden açılır):** `point_entries`, `delivery_proofs`, `rewards`, `reward_claims`, `notices`. Yeni sütun YOK →
+  logda `[şema]` satırı beklenmez.
+- **İsteğe bağlı ortam değişkenleri (girmesen de olur):** `POINTS_DAILY_MAX` (600), `POINT_TL` (0.10), `REWARD_VALUE_MIN_RATIO` (0.8), `REWARD_VALUE_MAX_RATIO` (1.5),
+  `POINTS_EXPIRE_DAYS` (365), `REWARD_SHIP_DAYS` (7), `REWARD_ANSWER_DAYS` (14), `DELIVERY_PROOF_KEEP_DAYS` (30), `NOTICE_KEEP_DAYS` (30).
+  Yeni Python paketi YOK.
+- **Değişen dosyalar:** `app/points.py` (yeni), `app/models.py`, `app/main.py`, `app/handoff.py`, `app/events.py`, `app/static/yonetim.js`,
+  `app/static/yonetim.html`, `tests/test_points.py` (yeni) ve `app/webapp/` (uygulama 0.17.0).
+- **Uyumluluk:** önce SUNUCUYU güncelle. 0.17.0 uygulaması eski sunucuda puan / ödül ekranlarında "sunucuya ulaşılamadı" der (teslim
+  bildirimi sırada bekler, 72 saat). Eski uygulama yeni sunucuda eskisi gibi çalışır (puanları telefonda sayar).
+
+**Yapılacak:** GitHub `Burcuri/rota-api` → `app/webapp` klasörünü sil (⋯ → *Delete directory*) → **Add file → Upload files** ile zip'in
+içindekileri yükle (`app/points.py` dahil) → Render'ın kurmasını bekle. Logda yeni satır beklenmez.
+**Deneme:** `/yonetim` › **Ödüller** sekmesi açılır. Sponsor hesabıyla Ürünlerim › yeni ödül (1000 puan, değer en az 80 TL) → kurye
+Puanlarım › Ödül kataloğunda görür (450 TL'den pahalı ürün 3000 puana konamaz). Kurye teslim edince (kapıda GPS ya da alıcı onayı) Puanlarım'da +10 görünür.
+
+---
+
 # Sunucu güncellemesi — Dilim 18 · 0.16.0 kamerayla adres okuma telefonun içinde (24 Ekim 2026)
 
 **Sunucu Python'u DEĞİŞMEDİ (sürüm yine 1.14.1).** Yeni tablo / sütun / ortam değişkeni / Python paketi YOK; logda yeni satır beklenmez.
@@ -243,6 +482,7 @@ Yönetim **göremez:** mesajlar, adres listeleri (telefonlarda durur), alıcın�
 | `RELAY_TTL_DAYS` / `RELAY_MAX_BYTES` / `RELAY_USER_MAX_BYTES` | `7` / `262144` / `10485760` | Mesaj aktarıcısı sınırları |
 | `GROUP_MAX` | `7` | Grup üst sınırı (kuran dahil) |
 | `WEB_APP_DIR` | boş | Web ikizi klasörü (varsayılan `app/webapp`) |
+| `DESTEK_EPOSTA` | boş | 1.20.1: `/destek` sayfasında ve uygulamanın Yardım ekranında görünen destek e-postası (herkese açık; gizli değil) |
 | `ESKI_AKIS` | boş | `1` → eski Başvur/Kabul uçları açılır (önerilmez) |
 
 ## Önceki dilimlerden (bu zip hepsini içerir)
