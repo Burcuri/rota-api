@@ -122,7 +122,7 @@ class PasswordChangeRequired(HTTPException):
 
 
 # Şifresi sıfırlanan kullanıcının kullanabildiği tek yollar: kendi bilgisi, şifre değiştirme, cihazı bırakma (çıkış)
-MUST_CHANGE_OK = {"/v1/me", "/v1/me/password", "/v1/devices/forget"}
+MUST_CHANGE_OK = {"/v1/me", "/v1/me/password", "/v1/devices/forget", "/v1/me/delete"}
 
 
 def make_token(user_id: str, tv: int = 0) -> str:
@@ -157,6 +157,8 @@ def current_user(
     user = db.get(User, data.get("sub"))
     if not user:
         raise HTTPException(401, "Hesap bulunamadı")
+    if user.deleted_at is not None:  # 1.20.0: kullanıcı hesabını sildi
+        raise HTTPException(401, "Bu hesap silindi")
     if user.banned:
         raise AccountBlocked(user.banned_reason or "")
     if int(data.get("tv") or 0) != int(user.token_version or 0):

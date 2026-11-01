@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from . import events
 from .auth import current_user
+from .pushes import queue as push_queue
 from .db import SessionLocal, get_db
 from .limits import Window
 from .models import MapBlock, Nudge, User
@@ -168,6 +169,7 @@ def make_router(visible_min: int = 10, nudge_hourly: int = 12, nudge_pair_min: i
         n = Nudge(from_id=user.id, to_id=to.id, kind=body.kind)
         db.add(n)
         events.log(db, "map.nudge", user.id, target=to.id, tur=body.kind)
+        push_queue(db, to.id, "nudge", thread="nudge")  # 1.19.0: "👋 Haritada biri size selam gönderdi" (10 dk'da bir)
         db.commit()
         return {"id": n.id}
 

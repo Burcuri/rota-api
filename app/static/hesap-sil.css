@@ -1,0 +1,46 @@
+/* Hesap silme sayfası (1.20.0) — alıcı sayfasıyla aynı marka dili: YALNIZ marka panosu renkleri (Turkuaz #00E5D4, Pembe #FF4DA6,
+   Sarı #FFD200, Lacivert #0D1B2A / #1B263B, Beyaz) ve açık zeminde okunur koyu tonlar (#006D64, #8A5A00, #AD1457). Yazılar ≥ 4,5:1. */
+@font-face{font-family:"Poppins";font-weight:800;font-style:normal;font-display:swap;src:url("/static/fonts/Poppins-ExtraBold.ttf") format("truetype")}
+:root{
+  --bg:#ffffff; --ink:#0D1B2A; --muted:#43536A; --line:rgba(13,27,42,.22); --card:#F1F5FA; --depth:rgba(13,27,42,.24);
+  --cyan:#00E5D4; --cyanT:#006D64; --cyanSoft:rgba(0,229,212,.16);
+  --pink:#FF4DA6; --pinkT:#AD1457; --pinkSoft:rgba(255,77,166,.12);
+  --yellow:#FFD200; --yellowT:#8A5A00; --yellowSoft:rgba(255,210,0,.22);
+  --display:"Poppins",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding-bottom:env(safe-area-inset-bottom)}
+header{padding:16px 16px 18px;background:var(--ink);color:#fff;border-radius:0 0 22px 22px;border-bottom:4px solid var(--cyan)}
+.brand{font-family:var(--display);font-weight:800;font-size:22px;letter-spacing:1.5px;color:var(--cyan)}
+.brand span{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-weight:700;color:#fff;opacity:.8;font-size:14.5px;letter-spacing:.3px;margin-left:8px}
+.title{margin:6px 0 0;font-family:var(--display);font-weight:800;font-size:24px;line-height:1.25;color:#fff}
+main{max-width:640px;margin:0 auto;padding:0 16px 32px}
+.card{margin:16px 0 0;padding:18px 16px;border-radius:20px;background:var(--card);border:2px solid var(--line);border-bottom-width:5px;border-bottom-color:var(--depth)}
+.lead{margin:0 0 14px;font-weight:600}
+.hello{margin:0 0 12px;font-family:var(--display);font-weight:800;font-size:20px}
+.fld{display:block;font-weight:800;margin:0 0 12px}
+.fld input{display:block;width:100%;margin-top:6px;min-height:52px;padding:10px 12px;border-radius:14px;border:2px solid var(--ink);font:inherit;font-size:18px;background:#fff;color:var(--ink)}
+.fld input:focus-visible,.check input:focus-visible{outline:3px solid var(--cyanT);outline-offset:2px}
+.btn{display:block;width:100%;min-height:54px;margin-top:6px;padding:12px 14px;border-radius:16px;border:0;border-bottom:5px solid var(--depth);background:var(--cyan);color:var(--ink);font-family:var(--display);font-weight:800;font-size:17px;letter-spacing:.2px;cursor:pointer}
+.btn:active:not(:disabled){transform:translateY(3px);border-bottom-width:2px}
+.btn:disabled{opacity:.45;cursor:default}
+.btn.danger{background:var(--pink);color:var(--ink)}
+.lnk{display:block;margin:12px auto 0;background:none;border:0;color:var(--cyanT);font:inherit;font-weight:800;text-decoration:underline;cursor:pointer;min-height:44px}
+.hint{color:var(--muted);margin:12px 0 0;font-size:15.5px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (max-width:560px){.cols{grid-template-columns:1fr}}
+.box{padding:12px 14px;border-radius:16px;background:#fff;border:2px solid var(--line)}
+.box.bad{border-color:var(--pink);background:var(--pinkSoft)}
+.box h2{margin:0 0 6px;font-family:var(--display);font-weight:800;font-size:16px}
+.box.bad h2{color:var(--pinkT)}
+.box ul{margin:0;padding-left:18px;font-size:15px}
+.box li{margin:3px 0}
+.warn{margin:12px 0 0;padding:10px 12px;border-radius:14px;background:var(--yellowSoft);border:2px solid var(--yellow);color:var(--yellowT);font-weight:800;font-size:15px}
+.check{display:flex;gap:12px;align-items:flex-start;margin:14px 0 6px;font-weight:600;cursor:pointer}
+.check input{width:26px;height:26px;flex:none;margin:2px 0 0;accent-color:var(--pinkT)}
+.big{font-family:var(--display);font-weight:800;font-size:22px;margin:0;color:var(--cyanT)}
+.msg{min-height:1.2em;margin:14px 0 0;font-weight:800}
+.msg.bad{padding:10px 12px;border-radius:14px;background:var(--pinkSoft);border:2px solid var(--pink);color:var(--pinkT)}
+.msg.ok{color:var(--cyanT)}

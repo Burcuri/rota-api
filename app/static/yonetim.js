@@ -14,8 +14,20 @@
     review_hide: 'Değerlendirmeyi gizledi', review_unhide: 'Değerlendirmeyi yeniden gösterdi', review_delete: 'Değerlendirmeyi kalıcı sildi',
     follow_view: 'Takip kaydının konum izini açtı',
     logo_delete: 'İşletme logosunu sildi',
+    reward_resolve: 'Ödül talebini sonuçlandırdı', points_adjust: 'Puan düzeltmesi yaptı',
+    blacklist_add: 'Kara listeye aldı', blacklist_note: 'Kara liste notunu güncelledi', blacklist_remove: 'Kara listeden çıkardı', user_note: 'Yönetim notu yazdı',
+    sponsor_feature: 'Ödül koyanı öne çıkardı', sponsor_pardon: 'Ödül koyanı affetti (görünürlük)',
+    coins_adjust: 'Coin düzeltmesi yaptı', ad_remove: 'Harita reklamını kaldırdı',
+    code_reveal: 'Doğrulama kodunu gösterdi', user_unlock: 'Üyenin giriş kilidini açtı',
+    door_delete: 'Kapı noktasını sildi', door_export: 'Kapı haritasını CSV olarak indirdi',
   };
-  const TARGET = { user: 'üye', admin: 'yönetici', review: 'değerlendirme', follow: 'takip' };
+  // 1.20.0: doğrulama kodları (şifremi unuttum, e-posta / telefon doğrulama, telefon değiştirme)
+  const KSTATUS = { live: 'Geçerli', used: 'Kullanıldı / yenisi istendi', expired: 'Süresi doldu' };
+  const TARGET = { user: 'üye', admin: 'yönetici', review: 'değerlendirme', follow: 'takip', claim: 'ödül talebi', ad: 'reklam', door: 'kapı noktası' };
+  // 1.21.0: Kapı haritası (ortak kapı katmanının önizlemesi)
+  const KST = { verified: 'Doğrulanmış', pending: 'Bekliyor', disputed: 'Tartışmalı', hidden: 'Gizli' };
+  const KCOL = { verified: '#00E5D4', pending: '#FFD200', disputed: '#FF4DA6', hidden: '#1B263B' };
+  const KSRC = { checkin: 'teslimde', pin: 'elle pin', recipient: 'alıcının kendi pini' };
   const FSTATUS = { asked: 'Yanıt bekliyor', active: 'Sürüyor', ended: 'Bitti' };
   const FREASON = {
     declined: 'kurye reddetti', cancelled: 'işveren vazgeçti', stopped_employer: 'işveren bitirdi', stopped_courier: 'kurye durdurdu',
@@ -29,6 +41,7 @@
   const ev = { kind: '', userId: '' };
   const rv = { source: '', stars: '', hidden: '', q: '', subject: '' };
   const fl = { status: '', userId: '' };
+  const km = { p: '', d: '', n: '', s: '', k: '', status: '', dName: '', nName: '', sName: '', map: null };
 
   // ------------------------------------------------------------------ yardımcılar
   function add(n, c) {
@@ -156,7 +169,7 @@
   }
 
   // ------------------------------------------------------------------ uygulama kabuğu
-  const TABS = [['ozet', 'Özet'], ['uyeler', 'Üyeler'], ['etkinlik', 'Etkinlik'], ['takipler', 'Takipler'], ['yorumlar', 'Yorumlar'], ['logolar', 'Logolar'], ['hatalar', 'Hatalar'], ['hesap', 'Hesabım']];
+  const TABS = [['ozet', 'Özet'], ['uyeler', 'Üyeler'], ['kodlar', 'Kodlar'], ['etkinlik', 'Etkinlik'], ['takipler', 'Takipler'], ['kapilar', 'Kapı haritası'], ['yorumlar', 'Yorumlar'], ['oduller', 'Ödüller'], ['karaliste', 'Kara liste'], ['reklamlar', 'Reklamlar'], ['logolar', 'Logolar'], ['hatalar', 'Hatalar'], ['hesap', 'Hesabım']];
 
   function showApp() {
     document.getElementById('who').hidden = false;
@@ -178,7 +191,8 @@
     ctx.tab = tab;
     Array.prototype.forEach.call(document.querySelectorAll('.tab'), (b) => b.setAttribute('aria-selected', b.getAttribute('data-tab') === tab ? 'true' : 'false'));
     clear(ctx.content);
-    ({ ozet: tabOzet, uyeler: tabUyeler, etkinlik: tabEtkinlik, takipler: tabTakipler, yorumlar: tabYorumlar, logolar: tabLogolar, hatalar: tabHatalar, hesap: tabHesap })[tab]();
+    if (km.map) { try { km.map.remove(); } catch (e) { /* */ } km.map = null; }
+    ({ ozet: tabOzet, kapilar: tabKapi, uyeler: tabUyeler, kodlar: tabKodlar, etkinlik: tabEtkinlik, takipler: tabTakipler, yorumlar: tabYorumlar, oduller: tabOduller, karaliste: tabKaraliste, reklamlar: tabReklamlar, logolar: tabLogolar, hatalar: tabHatalar, hesap: tabHesap })[tab]();
   }
 
   function loading(node) { clear(node); node.appendChild(h('p', { class: 'muted', text: 'Yükleniyor…' })); }
@@ -198,10 +212,11 @@
         stat(s.byRole.sponsor, 'Sponsor', () => { Object.assign(uv, { q: '', role: 'sponsor', banned: '' }); go('uyeler'); }),
         stat(s.banned, 'Askıdaki üye', () => { Object.assign(uv, { q: '', role: '', banned: '1' }); go('uyeler'); }),
         stat(s.newUsers7d, 'Son 7 gün yeni üye'),
+        stat(s.deleted30d || 0, 'Son 30 gün hesabını silen', () => { Object.assign(uv, { q: '', role: '', banned: 'del' }); go('uyeler'); }),
         stat(s.logins24h, 'Son 24 saatte giriş yapan'),
         stat(s.openJobs, 'Açık ilan'),
         stat(s.activeHandoffs, 'Açık teslim bağlantısı'),
-        stat(s.doorPoints, 'Ortak harita kapı noktası'),
+        stat(s.doorPoints, 'Ortak harita kapı noktası', () => go('kapilar')),
         stat(s.reviews, 'Değerlendirme', () => go('yorumlar')),
         stat(s.reviewsHidden, 'Gizlenmiş değerlendirme', () => { Object.assign(rv, { hidden: '1' }); go('yorumlar'); }),
         stat(s.admins, 'Yönetici')));
@@ -214,7 +229,7 @@
     const c = ctx.content;
     const q = h('input', { type: 'search', placeholder: 'Ad, telefon, kullanıcı adı, e-posta ya da kimlik', value: uv.q, 'aria-label': 'Üye ara', class: 'grow' });
     const role = h('select', { 'aria-label': 'Hesap türü' }, h('option', { value: '', text: 'Tüm türler' }), ...Object.keys(ROLE).map((k) => h('option', { value: k, text: ROLE[k], selected: uv.role === k })));
-    const banned = h('select', { 'aria-label': 'Durum' }, h('option', { value: '', text: 'Tüm durumlar' }), h('option', { value: '1', text: 'Askıdakiler', selected: uv.banned === '1' }), h('option', { value: '0', text: 'Aktifler', selected: uv.banned === '0' }));
+    const banned = h('select', { 'aria-label': 'Durum' }, h('option', { value: '', text: 'Tüm durumlar' }), h('option', { value: '1', text: 'Askıdakiler', selected: uv.banned === '1' }), h('option', { value: '0', text: 'Aktifler', selected: uv.banned === '0' }), h('option', { value: 'bl', text: 'Kara listedekiler', selected: uv.banned === 'bl' }), h('option', { value: 'del', text: 'Hesabını silenler', selected: uv.banned === 'del' }));
     const sort = h('select', { 'aria-label': 'Sıra' }, ...[['new', 'En yeni'], ['old', 'En eski'], ['login', 'Son giriş'], ['name', 'Ada göre']].map(([v, t]) => h('option', { value: v, text: t, selected: uv.sort === v })));
     const list = h('div', { id: 'ulist' });
     const info = h('div', { class: 'muted small', id: 'uinfo' });
@@ -247,8 +262,8 @@
   function userRow(u) {
     return h('button', { type: 'button', class: 'item', onclick: () => openUser(u.id) },
       h('span', null, h('span', { class: 'nm', text: u.name || '(adsız)' }), ' ', h('span', { class: 'pill', text: ROLE[u.role] || u.role }), ' ',
-        u.banned ? h('span', { class: 'pill bad', text: 'Askıda' }) : null, u.mustChangePassword ? h('span', { class: 'pill warn', text: 'Şifre bekliyor' }) : null),
-      h('span', { class: 'muted small', text: [u.userNo ? 'No ' + (PFX[u.role] || 'KRY') + '-' + u.userNo : '', u.phone, u.username ? '@' + u.username : '', 'son giriş: ' + when(u.lastLoginAt)].filter(Boolean).join(' · ') }));
+        u.deleted ? h('span', { class: 'pill', text: 'Silindi' }) : null, u.banned ? h('span', { class: 'pill bad', text: 'Askıda' }) : null, u.blacklisted ? h('span', { class: 'pill bad', text: 'Kara liste' }) : null, u.mustChangePassword ? h('span', { class: 'pill warn', text: 'Şifre bekliyor' }) : null),
+      h('span', { class: 'muted small', text: [u.userNo ? 'No ' + (PFX[u.role] || 'KRY') + '-' + u.userNo : '', u.deleted ? 'silindi: ' + when(u.deletedAt) : u.phone, u.username ? '@' + u.username : '', u.deleted ? '' : 'son giriş: ' + when(u.lastLoginAt)].filter(Boolean).join(' · ') }));
   }
 
   function openUser(id) {
@@ -268,8 +283,19 @@
     c.appendChild(h('h2', { text: d.name || '(adsız)' }));
     c.appendChild(h('div', { class: 'row' }, h('span', { class: 'pill', text: ROLE[d.role] || d.role }),
       d.banned ? h('span', { class: 'pill bad', text: 'Askıda' }) : h('span', { class: 'pill ok', text: 'Aktif' }),
+      d.mark && d.mark.blacklisted ? h('span', { class: 'pill bad', text: 'Kara listede' }) : null,
       d.mustChangePassword ? h('span', { class: 'pill warn', text: 'Yeni şifre belirlemesi bekleniyor' }) : null,
       h('span', { class: 'muted small', text: 'Kimlik: ' + d.id })));
+
+    // 1.20.0: hesabını silen üye — kişisel bilgiler silindi; yalnız kayıtlar ve (kara listedeyse) yönetim notu
+    if (d.deleted) {
+      c.appendChild(h('div', { class: 'box' }, h('h3', { text: 'Hesap silindi' }),
+        kv([['Ne zaman', when(d.deletedAt)], ['Kullanıcı no', d.userNo ? (PFX[d.role] || 'KRY') + '-' + d.userNo + ' (yeniden verilmez)' : '—']]),
+        h('p', { class: 'small muted', text: 'Üye hesabını kendisi sildi: ad, telefon, kullanıcı adı, e-posta, profil, puan, coin, reklam, değerlendirme ve konum kayıtları silindi. Rıza kayıtları ve etkinlik akışı (60 gün) kalır. Kara listedeyse aynı numarayla açılan yeni hesap kara listeyi devralır.' })));
+      c.appendChild(blacklistBox(d.id, d.mark || {}, () => openUser(d.id)));
+      c.appendChild(h('div', { class: 'box' }, h('h3', { text: 'Son etkinlikler' }), d.events.length ? d.events.map(evRow) : h('p', { class: 'muted', text: 'Kayıt yok.' })));
+      return;
+    }
 
     // --- bilgileri düzenle
     const f = { name: h('input', { value: d.name || '', maxlength: '120' }), phone: h('input', { value: d.phone || '', inputmode: 'tel' }), username: h('input', { value: d.username || '', autocapitalize: 'none' }), email: h('input', { value: d.email || '', type: 'email' }),
@@ -299,6 +325,15 @@
           api('POST', '/v1/admin/users/' + d.id + '/ban', { reason: reason.value }).then(() => openUser(d.id)).catch((er) => say(bmsg, er.message, 'bad'));
         }), bmsg));
     }
+
+    // --- kara liste ve yönetim notu (1.16.0) + ödül karnesi
+    c.appendChild(blacklistBox(d.id, d.mark || {}, () => openUser(d.id)));
+    if (d.standing) c.appendChild(ownerBox({ id: d.id, name: d.name, code: d.userNo ? (PFX[d.role] || 'ISV') + '-' + d.userNo : '', role: d.role, standing: d.standing, mark: d.mark || {}, rewards: null }, () => openUser(d.id), true));
+    // --- 1.17.0: Rota coin (sunucudaki defter) ve harita reklamları
+    c.appendChild(coinBox(d.id));
+
+    // --- 1.20.0: giriş ve güvenlik (doğrulama, giriş kilidi, kişiye ulaşmayan kodlar)
+    c.appendChild(securityBox(d.id));
 
     // --- şifre sıfırlama ve oturumlar
     const pmsg = h('div', { class: 'msg', role: 'status' });
@@ -360,6 +395,13 @@
       case 'follow.end': return FREASON[m.reason] || '';
       case 'user.register': case 'user.role': return ROLE[m.role] || '';
       case 'user.profile': return (m.fields || []).map((x) => FIELD[x] || x).join(', ');
+      case 'coin.buy': return m.n + ' coin';
+      case 'ad.create': return m.n + ' nokta · ' + m.days + ' gün · ' + m.cost + ' coin';
+      case 'job.promote': return m.days + ' gün';
+      case 'guide.backup': case 'guide.restore': return m.n + ' kayıt';
+      case 'user.forgot': return (m.ch === 'email' ? 'e-posta' : 'SMS') + (m.ok ? '' : ' · kişiye ulaşmadı (Kodlar sekmesinde)');
+      case 'user.pwreset': return m.ch === 'email' ? 'e-postadaki kodla' : 'SMS / yönetim kodlu';
+      case 'user.locked': return m.min >= 60 ? (m.min / 60) + ' saat kilit' : m.min + ' dk kilit';
       default: return '';
     }
   }
@@ -570,7 +612,482 @@
     load(true);
   }
 
+  // ------------------------------------------------------------------ Ödüller ve puan (1.15.0)
+  const CSTATUS = { pending: 'Kargo bekliyor', shipped: 'Kargoda', received: 'Teslim alındı', disputed: 'Gelmedi (şikâyet)', refunded: 'Puan iade', cancelled: 'İptal' };
+  const CREASON = {
+    courier_received: 'kurye aldım dedi', auto_received: '14 gün cevap yok: alındı sayıldı', late_ship: '7 günde kargolanmadı',
+    owner_cancel: 'ödülü koyan iptal etti', courier_cancel: 'kurye vazgeçti', admin_refund: 'yönetim iade etti', admin_received: 'yönetim alındı saydı',
+  };
+  function tabOduller() {
+    const c = ctx.content;
+    const sel = h('select', { 'aria-label': 'Talepler' },
+      h('option', { value: 'open', text: 'Açık talepler', selected: true }), h('option', { value: 'disputed', text: 'Şikâyetli (gelmedi)' }),
+      h('option', { value: 'late', text: 'Geciken kargo' }), h('option', { value: 'all', text: 'Hepsi' }));
+    const list = h('div'); const info = h('div', { class: 'msg', role: 'status' });
+    const cards = h('div'); const watch = h('div');
+    const view = h('select', { 'aria-label': 'Ödül koyanlar' }, ...[['all', 'Hepsi'], ['irregular', 'Düzensiz'], ['hidden', 'Katalogda gizli'], ['trusted', 'Güvenilir'], ['featured', 'Öne çıkan'], ['blacklisted', 'Kara listede']]
+      .map(([v, t]) => h('option', { value: v, text: t })));
+    function claimBox(x) {
+      const box = h('div', { class: 'box' + (x.status === 'disputed' ? ' bad' : x.late ? ' warn' : '') });
+      box.appendChild(h('h3', { text: x.reward + ' · ' + x.cost + ' puan · ' + (CSTATUS[x.status] || x.status) }));
+      box.appendChild(h('div', { class: 'muted small', text: 'Talep ' + x.code + ' · ' + (x.brand || x.owner.name) + ' (' + (x.owner.code || '—') + ') → ' + (x.courier.code || '—') + (x.courier.name ? ' (' + x.courier.name + ')' : '') }));
+      box.appendChild(h('div', { class: 'muted small', text: 'Alındı: ' + when(x.createdAt) + ' · son kargo: ' + when(x.shipDueAt) + (x.shippedAt ? ' · kargolandı: ' + when(x.shippedAt) + (x.onTime === false ? ' (geç)' : '') : '') + (x.carrier ? ' · ' + x.carrier + ' ' + x.tracking : '') }));
+      if (x.stars) box.appendChild(h('div', { class: 'small', text: 'Memnuniyet: ' + stars(x.stars) }));
+      if (x.note) box.appendChild(h('div', { class: 'small', text: 'Kuryenin notu: ' + x.note }));
+      if (x.closeReason) box.appendChild(h('div', { class: 'muted small', text: 'Kapanış: ' + (CREASON[x.closeReason] || x.closeReason) + ' · ' + when(x.closedAt) }));
+      if (x.status === 'pending' || x.status === 'shipped' || x.status === 'disputed') {
+        const note = h('input', { type: 'text', placeholder: 'Not (işlem günlüğüne yazılır)', maxlength: '200' });
+        const act = (action) => api('POST', '/v1/admin/rewards/claims/' + encodeURIComponent(x.id) + '/resolve', { action, note: note.value }).then((y) => { box.replaceWith(claimBox(y)); }).catch((er) => say(info, er.message, 'bad'));
+        box.appendChild(h('div', { class: 'row' }, note,
+          confirmBtn('Puanı iade et', 'danger', 'Kuryeye puan iade edilsin mi?', () => act('refund')),
+          confirmBtn('Teslim alındı say', '', 'Teslim alındı sayılsın mı?', () => act('received'))));
+      }
+      return box;
+    }
+    function load() {
+      loading(list);
+      api('GET', '/v1/admin/rewards/claims?' + qs({ status: sel.value, limit: 200 })).then((r) => {
+        clear(list);
+        if (!r.items.length) { list.appendChild(h('p', { class: 'muted', text: 'Talep yok.' })); return; }
+        r.items.forEach((x) => list.appendChild(claimBox(x)));
+      }).catch((er) => failed(list, er));
+    }
+    function loadCards() {
+      loading(cards);
+      api('GET', '/v1/admin/rewards/owners?' + qs({ view: view.value })).then((r) => {
+        clear(cards);
+        if (!r.items.length) { cards.appendChild(h('p', { class: 'muted', text: view.value === 'all' ? 'Henüz ödül koyan yok.' : 'Bu durumda ödül koyan yok.' })); return; }
+        r.items.forEach((x) => cards.appendChild(ownerBox(x, loadCards)));
+      }).catch((er) => failed(cards, er));
+    }
+    function loadWatch() {
+      loading(watch);
+      api('GET', '/v1/admin/points/watch?days=7').then((r) => {
+        clear(watch);
+        const flagged = r.items.filter((x) => x.flags.length);
+        if (!flagged.length) { watch.appendChild(h('p', { class: 'muted', text: 'Son 7 günde şüpheli puan yok.' })); return; }
+        flagged.forEach((x) => {
+          const d = h('input', { type: 'number', placeholder: 'Puan (örn. -60)', style: 'width:8em' });
+          const n = h('input', { type: 'text', placeholder: 'Neden', maxlength: '120' });
+          const msg = h('span', { class: 'small' });
+          const bn = h('input', { type: 'text', placeholder: 'Kara liste notu', maxlength: '500', value: x.flags.join(', ') });
+          const bl = x.blacklisted ? h('span', { class: 'pill bad', text: 'Kara listede' }) : h('span', { class: 'row' }, bn, h('button', { type: 'button', class: 'btn small danger', text: 'Kara listeye al', onclick: () => {
+            api('POST', '/v1/admin/blacklist', { userId: x.id, note: bn.value }).then(() => loadWatch()).catch((er) => { msg.textContent = er.message; });
+          } }));
+          watch.appendChild(h('div', { class: 'box warn' },
+            h('h3', { text: (x.code || '—') + (x.name ? ' · ' + x.name : '') + ' — ' + x.flags.join(', ') }),
+            h('div', { class: 'muted small', text: x.verified + ' doğrulanmış teslim (' + x.recipient + ' alıcı onayı, ' + x.gps + ' kapıda GPS) · tavana takılan ' + x.capHits + ' · aynı adrese tekrar ' + x.sameAddr + ' · en kalabalık yer payı %' + Math.round(100 * x.topCellShare) }),
+            h('div', { class: 'row' }, d, n, h('button', { type: 'button', class: 'btn small', text: 'Puanı düzelt', onclick: () => {
+              api('POST', '/v1/admin/users/' + encodeURIComponent(x.id) + '/points', { delta: parseInt(d.value, 10) || 0, note: n.value }).then((y) => { msg.textContent = 'Yeni bakiye: ' + y.balance; }).catch((er) => { msg.textContent = er.message; });
+            } }), msg), h('div', { class: 'row' }, bl, h('button', { type: 'button', class: 'btn small ghost', text: 'Üyeyi aç', onclick: () => openUser(x.id) }))));
+        });
+      }).catch((er) => failed(watch, er));
+    }
+    sel.addEventListener('change', load);
+    view.addEventListener('change', loadCards);
+    c.appendChild(h('h2', { text: 'Ödül talepleri' }));
+    c.appendChild(h('p', { class: 'small muted', text: 'Kurye puanla ödül alır → puan bloke, ödülü koyana bildirim → 7 gün içinde kargo (yoksa puan iade) → kurye "aldım" (yıldızla) ya da "gelmedi" (buraya düşer). Kargodan sonra 14 gün cevap yoksa alındı sayılır. Kargo adresi yönetime gösterilmez; talep kapanınca silinir.' }));
+    c.appendChild(h('div', { class: 'row' }, sel));
+    c.appendChild(info); c.appendChild(list);
+    c.appendChild(h('h2', { text: 'Sponsor / işyeri karnesi ve görünürlük' }));
+    c.appendChild(h('p', { class: 'small muted', text: 'Reklam ile hediye bağlı değildir (reklam peşin, coin ile). Ödül koyanı GÖRÜNÜRLÜKLE ödüllendir: ✓ Güvenilir (kendiliğinden: en az 3 kargo, %90+ zamanında, memnuniyet 4+, açık şikâyet ve son 90 günde geç kargo yok) katalogda üstte ve rozetli; ⭐ Öne çıkan (senin verdiğin süre) en üstte. Düzensiz (son 90 günde 2 geç kargo ya da 2 "gelmedi" ya da düşük memnuniyet) ve kara listedekilerin ödülleri katalogda görünmez, yenisini koyamaz; "Affet" verilen süre boyunca yine gösterir.' }));
+    c.appendChild(h('div', { class: 'row' }, view));
+    c.appendChild(cards);
+    c.appendChild(h('h2', { text: 'Şüpheli puanlar (son 7 gün)' }));
+    c.appendChild(h('p', { class: 'small muted', text: 'Puan yalnız doğrulanmış teslimden: alıcı onayı ya da kapıda GPS (≤50 m). Günde en çok 600 puan; aynı adrese aynı gün ikinci teslim puan almaz. Düzeltme işlem günlüğüne yazılır ve kullanıcıya bildirim gider.' }));
+    c.appendChild(watch);
+    load(); loadCards(); loadWatch();
+  }
+
+  // ------------------------------------------------------------------ Görünürlük ve kara liste (1.16.0)
+  const LEVEL = { blacklisted: ['Kara listede', 'bad'], hidden: ['Katalogda gizli', 'bad'], featured: ['⭐ Öne çıkan', 'ok'], trusted: ['✓ Güvenilir', 'ok'], normal: ['Normal', ''] };
+  function dateOnly(iso) { if (!iso) return '—'; try { return new Date(iso).toLocaleDateString('tr-TR'); } catch (e) { return iso; } }
+
+  /** Ödül koyanın karnesi + görünürlük düğmeleri (öne çıkar / affet / kara liste). `inUser`: üye ayrıntısında (Üyeyi aç düğmesi yok). */
+  function ownerBox(x, refresh, inUser) {
+    const st = x.standing; const m = x.mark || {};
+    const lv = LEVEL[st.level] || [st.level, ''];
+    const msg = h('div', { class: 'msg', role: 'status' });
+    const box = h('div', { class: 'box' + (st.hidden ? ' bad' : st.irregular ? ' warn' : ''), 'data-owner': x.id });
+    box.appendChild(h('h3', null, (inUser ? 'Ödül karnesi' : (x.name || '—') + (x.code ? ' (' + x.code + ')' : '')) + ' ',
+      h('span', { class: 'pill', text: ROLE[x.role] || x.role || '' }), ' ', h('span', { class: 'pill ' + lv[1], text: lv[0] }),
+      st.pardoned ? h('span', { class: 'pill warn', text: 'affedildi · ' + dateOnly(st.pardonUntil) + ' tarihine dek' }) : null,
+      st.featured ? h('span', { class: 'pill ok', text: dateOnly(st.featuredUntil) + ' tarihine dek' }) : null));
+    if (st.reasons.length) box.appendChild(h('div', { class: 'small', text: 'Neden: ' + st.reasons.join(' · ') }));
+    const kv = h('dl', { class: 'kv' });
+    [['Etkin ödül', x.rewards == null ? '—' : x.rewards], ['Talep', st.claims], ['Kargolanan', st.shipped], ['Zamanında kargo', st.onTimePct == null ? '—' : '%' + st.onTimePct],
+      ['7 günde kargolamadı', st.late90 + ' (90 gün) · ' + st.late + ' toplam'], ['Şikâyet (gelmedi)', st.disputed90 + ' (90 gün) · ' + st.disputed + ' toplam'],
+      ['Memnuniyet', st.avgStars == null ? '—' : st.avgStars + ' / 5 (' + st.starsN + ' puanlama)']]
+      .forEach(([k, v]) => { kv.appendChild(h('dt', { text: k })); kv.appendChild(h('dd', { text: String(v) })); });
+    box.appendChild(kv);
+    if (!inUser && m.note) box.appendChild(h('div', { class: 'small', text: 'Yönetim notu: ' + m.note + (m.noteBy ? ' (' + m.noteBy + ' · ' + when(m.noteAt) + ')' : '') }));
+    const post = (path, body) => api('POST', path, body).then(() => refresh()).catch((er) => say(msg, er.message, 'bad'));
+    const uid = encodeURIComponent(x.id);
+    const row = h('div', { class: 'row' });
+    if (!st.hidden) {
+      if (st.featured) row.appendChild(h('button', { type: 'button', class: 'btn small ghost', text: 'Öne çıkarmayı kaldır', onclick: () => post('/v1/admin/users/' + uid + '/feature', { days: 0 }) }));
+      else {
+        row.appendChild(h('button', { type: 'button', class: 'btn small', text: '⭐ Öne çıkar 7 gün', onclick: () => post('/v1/admin/users/' + uid + '/feature', { days: 7 }) }));
+        row.appendChild(h('button', { type: 'button', class: 'btn small', text: '⭐ 30 gün', onclick: () => post('/v1/admin/users/' + uid + '/feature', { days: 30 }) }));
+      }
+    }
+    if (st.irregular && !st.blacklisted) {
+      if (st.pardoned) row.appendChild(h('button', { type: 'button', class: 'btn small ghost', text: 'Affı kaldır', onclick: () => post('/v1/admin/users/' + uid + '/pardon', { days: 0 }) }));
+      else row.appendChild(confirmBtn('Affet 30 gün', '', 'Ödülleri 30 gün yine görünsün mü?', () => post('/v1/admin/users/' + uid + '/pardon', { days: 30 })));
+    }
+    if (!inUser) {
+      if (m.blacklisted) row.appendChild(confirmBtn('Kara listeden çıkar', 'ghost', 'Kara listeden çıkarılsın mı?', () => api('DELETE', '/v1/admin/blacklist/' + uid).then(() => refresh()).catch((er) => say(msg, er.message, 'bad'))));
+      else {
+        const note = h('input', { type: 'text', placeholder: 'Kara liste notu (neden)', maxlength: '500', value: st.reasons.join('; ') });
+        row.appendChild(note);
+        row.appendChild(h('button', { type: 'button', class: 'btn small danger', text: 'Kara listeye al', onclick: () => post('/v1/admin/blacklist', { userId: x.id, note: note.value }) }));
+      }
+      row.appendChild(h('button', { type: 'button', class: 'btn small ghost', text: 'Üyeyi aç', onclick: () => openUser(x.id) }));
+    }
+    box.appendChild(row); box.appendChild(msg);
+    return box;
+  }
+
+  /** Üye ayrıntısındaki kara liste + yönetim notu kutusu. */
+  function blacklistBox(id, m, refresh) {
+    const msg = h('div', { class: 'msg', role: 'status' });
+    const note = h('textarea', { maxlength: '500', placeholder: 'Yönetim notu (yalnız yönetim görür). Kara listeye alırken neden zorunlu.' });
+    note.value = m.note || '';
+    const uid = encodeURIComponent(id);
+    const box = h('div', { class: 'box' + (m.blacklisted ? ' bad' : ''), 'data-blacklist': id },
+      h('h3', { text: m.blacklisted ? 'Kara listede' : 'Kara liste ve yönetim notu' }),
+      h('p', { class: 'small muted', text: 'Kara listedeki kurye ödül alamaz; sponsor / işyeri ödül koyamaz ve ödülleri katalogda görünmez (kargo bekleyen talepleri yine gönderir). Not yalnız yönetime görünür. Uygulamadan men etmek ayrıdır.' }),
+      m.blacklisted ? kv([['Listeye alan', m.listedBy], ['Ne zaman', when(m.listedAt)]]) : null,
+      h('label', { class: 'f' }, 'Not', note),
+      m.noteAt ? h('div', { class: 'muted small', text: 'Son not: ' + (m.noteBy || '—') + ' · ' + when(m.noteAt) }) : null);
+    const row = h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn small ghost', text: 'Notu kaydet', onclick: () => {
+      api('PUT', '/v1/admin/users/' + uid + '/note', { note: note.value }).then(() => { say(msg, 'Not kaydedildi.', 'ok'); }).catch((er) => say(msg, er.message, 'bad'));
+    } }));
+    if (m.blacklisted) row.appendChild(confirmBtn('Kara listeden çıkar', 'ghost', 'Kara listeden çıkarılsın mı? (Not geçmiş olarak kalır.)', () => api('DELETE', '/v1/admin/blacklist/' + uid).then(() => refresh()).catch((er) => say(msg, er.message, 'bad'))));
+    else row.appendChild(h('button', { type: 'button', class: 'btn small danger', text: 'Kara listeye al', onclick: () => api('POST', '/v1/admin/blacklist', { userId: id, note: note.value }).then(() => refresh()).catch((er) => say(msg, er.message, 'bad')) }));
+    box.appendChild(row); box.appendChild(msg);
+    return box;
+  }
+
+  function tabKaraliste() {
+    const c = ctx.content;
+    const who = h('input', { type: 'text', placeholder: 'Kullanıcı no (KRY- / ISV- / SPN-…), telefon ya da kimlik', class: 'grow', 'aria-label': 'Üye' });
+    const note = h('textarea', { maxlength: '500', placeholder: 'Neden (yalnız yönetim görür)', 'aria-label': 'Kara liste notu' });
+    const amsg = h('div', { class: 'msg', role: 'status' });
+    const list = h('div');
+    function card(x) {
+      const n = h('textarea', { maxlength: '500', 'aria-label': 'Not' }); n.value = x.note || '';
+      const msg = h('div', { class: 'msg', role: 'status' });
+      const uid = encodeURIComponent(x.id);
+      return h('div', { class: 'box bad', 'data-bl': x.id },
+        h('h3', null, (x.name || '(adsız)') + ' ', h('span', { class: 'pill', text: ROLE[x.role] || x.role }), x.banned ? h('span', { class: 'pill bad', text: 'Askıda' }) : null),
+        h('div', { class: 'muted small', text: [x.code, x.deleted ? 'hesabını sildi (aynı numarayla açılan hesap kara listeyi devralır)' : x.phone, 'listeye alan: ' + (x.listedBy || '—') + ' · ' + when(x.listedAt)].filter(Boolean).join(' · ') }),
+        h('label', { class: 'f' }, 'Not', n),
+        x.noteAt ? h('div', { class: 'muted small', text: 'Son not: ' + (x.noteBy || '—') + ' · ' + when(x.noteAt) }) : null,
+        h('div', { class: 'row' },
+          h('button', { type: 'button', class: 'btn small', text: 'Notu kaydet', onclick: () => api('PUT', '/v1/admin/users/' + uid + '/note', { note: n.value }).then(() => say(msg, 'Not kaydedildi.', 'ok')).catch((er) => say(msg, er.message, 'bad')) }),
+          confirmBtn('Kara listeden çıkar', 'ghost', 'Kara listeden çıkarılsın mı?', () => api('DELETE', '/v1/admin/blacklist/' + uid).then(() => load()).catch((er) => say(msg, er.message, 'bad'))),
+          h('button', { type: 'button', class: 'btn small ghost', text: 'Üyeyi aç', onclick: () => openUser(x.id) })),
+        msg);
+    }
+    function load() {
+      loading(list);
+      api('GET', '/v1/admin/blacklist').then((r) => {
+        clear(list);
+        list.appendChild(h('p', { class: 'muted small', text: r.items.length + ' kişi kara listede' }));
+        if (!r.items.length) { list.appendChild(h('p', { class: 'muted', text: 'Kara liste boş.' })); return; }
+        r.items.forEach((x) => list.appendChild(card(x)));
+      }).catch((er) => failed(list, er));
+    }
+    c.appendChild(h('h2', { text: 'Kara liste' }));
+    c.appendChild(h('p', { class: 'small muted', text: 'Kurye, işyeri ya da sponsor kara listeye alınabilir; adının yanına not düşülür (yalnız yönetim görür). Kara listedeki kurye ödül alamaz; işyeri / sponsor ödül koyamaz ve ödülleri katalogda görünmez. Her işlem yönetici adıyla işlem günlüğüne yazılır. Uygulamadan tamamen men etmek için: Üyeler › üye › Uygulamadan men et.' }));
+    c.appendChild(h('div', { class: 'box' }, h('h3', { text: 'Kara listeye ekle' }), h('div', { class: 'row' }, who), h('label', { class: 'f' }, 'Not', note),
+      h('button', { type: 'button', class: 'btn danger', text: 'Kara listeye al', onclick: () => {
+        api('POST', '/v1/admin/blacklist', { code: who.value, note: note.value }).then((x) => { say(amsg, (x.name || 'Üye') + ' kara listeye alındı.', 'ok'); who.value = ''; note.value = ''; load(); }).catch((er) => say(amsg, er.message, 'bad'));
+      } }), amsg));
+    c.appendChild(list);
+    load();
+  }
+
+  // ------------------------------------------------------------------ 1.17.0: coin defteri + reklam deposu (sunucuda)
+  function adWhere(a) { return a.lat.toFixed(4) + ', ' + a.lon.toFixed(4); }
+  function adLine(a) {
+    return h('div', { class: 'ev' }, h('span', { class: 't', text: dateOnly(new Date(a.at).toISOString()) + ' → ' + dateOnly(new Date(a.endsAt).toISOString()) }),
+      h('span', null, '📣 ' + a.label + ' · ' + a.days + ' gün · ' + a.cost + ' coin · ' + adWhere(a) + ' ', h('span', { class: 'pill' + (a.active ? ' ok' : ''), text: a.active ? 'yayında' : 'süresi doldu' })));
+  }
+  function coinBox(uid) {
+    const box = h('div', { class: 'box', 'data-coins': uid }, h('h3', { text: 'Rota coin ve reklamlar' }));
+    const body = h('div'); box.appendChild(body); loading(body);
+    const delta = h('input', { type: 'number', step: '1', placeholder: '+50 / -50', 'aria-label': 'Coin düzeltmesi' });
+    const note = h('input', { type: 'text', maxlength: '120', placeholder: 'Neden (üyeye bildirim gider)', class: 'grow', 'aria-label': 'Coin düzeltme nedeni' });
+    const msg = h('div', { class: 'msg', role: 'status' });
+    function load() {
+      api('GET', '/v1/admin/users/' + encodeURIComponent(uid) + '/coins').then((r) => {
+        clear(body);
+        body.appendChild(kv([['Bakiye', r.balance + ' Rota coin'], ['Harita reklamı', r.ads.filter((a) => a.active).length + ' yayında · ' + r.ads.length + ' toplam (son 180 gün)']]));
+        if (r.history.length) {
+          body.appendChild(h('details', null, h('summary', { text: 'Son coin hareketleri (' + r.history.length + ')' }),
+            ...r.history.map((x) => h('div', { class: 'ev' }, h('span', { class: 't', text: when(new Date(x.at).toISOString()) }), h('span', { text: (x.delta > 0 ? '+' : '') + x.delta + ' · ' + x.label })))));
+        }
+        if (r.ads.length) body.appendChild(h('details', null, h('summary', { text: 'Reklamları' }), ...r.ads.map(adLine)));
+      }).catch((er) => failed(body, er));
+    }
+    box.appendChild(h('div', { class: 'row' }, delta, note,
+      h('button', { type: 'button', class: 'btn small', text: 'Coin düzelt', onclick: () => {
+        api('POST', '/v1/admin/users/' + encodeURIComponent(uid) + '/coins', { delta: parseInt(delta.value || '0', 10) || 0, note: note.value })
+          .then((r) => { say(msg, 'Yeni bakiye: ' + r.balance + ' coin. Üyeye bildirim gitti.', 'ok'); delta.value = ''; note.value = ''; load(); }).catch((er) => say(msg, er.message, 'bad'));
+      } })));
+    box.appendChild(h('p', { class: 'small muted', text: 'Coin mağazadan (şimdilik test satın alma) yüklenir; harita reklamı ve öne çıkan ilan için harcanır. Düzeltme işlem günlüğüne yazılır.' }));
+    box.appendChild(msg);
+    load();
+    return box;
+  }
+  function tabReklamlar() {
+    const c = ctx.content;
+    const view = h('select', { 'aria-label': 'Reklamlar' }, h('option', { value: 'active', text: 'Yayında olanlar' }), h('option', { value: 'all', text: 'Son 90 gün (kaldırılanlar dahil)' }));
+    const list = h('div');
+    function card(x) {
+      const msg = h('div', { class: 'msg', role: 'status' });
+      const o = x.owner || {};
+      return h('div', { class: 'box' + (x.removed ? ' bad' : ''), 'data-ad': x.id },
+        h('h3', null, '📣 ' + x.label + ' ', x.removed ? h('span', { class: 'pill bad', text: x.removedBy === 'admin' ? 'yönetim kaldırdı' : 'sahibi kaldırdı' }) : h('span', { class: 'pill' + (x.active ? ' ok' : ''), text: x.active ? 'yayında' : 'süresi doldu' })),
+        h('div', { class: 'muted small', text: [o.shown && o.shown !== o.name ? o.shown + ' (' + (o.name || '—') + ')' : (o.name || '(adsız)'), o.code, ROLE[o.role] || o.role, o.banned ? 'askıda' : ''].filter(Boolean).join(' · ') }),
+        kv([['Nokta', adWhere(x)], ['Süre', x.days + ' gün · ' + dateOnly(new Date(x.at).toISOString()) + ' → ' + dateOnly(new Date(x.endsAt).toISOString())], ['Bedel', x.cost + ' coin' + (x.package ? ' (paket ' + x.package + ')' : '')]]),
+        h('div', { class: 'row' },
+          x.removed ? null : confirmBtn('Reklamı kaldır', 'danger', 'Reklam kuryelerin haritasından kalksın mı? (Sahibine bildirim gider.)', () => api('DELETE', '/v1/admin/ads/' + encodeURIComponent(x.id)).then(() => load()).catch((er) => say(msg, er.message, 'bad'))),
+          h('button', { type: 'button', class: 'btn small ghost', text: 'Üyeyi aç', onclick: () => openUser(o.id) })),
+        msg);
+    }
+    function load() {
+      loading(list);
+      api('GET', '/v1/admin/ads?' + qs({ view: view.value })).then((r) => {
+        clear(list);
+        list.appendChild(h('p', { class: 'muted small', text: r.items.length + ' reklam' }));
+        if (!r.items.length) { list.appendChild(h('p', { class: 'muted', text: view.value === 'active' ? 'Yayında reklam yok.' : 'Reklam yok.' })); return; }
+        r.items.forEach((x) => list.appendChild(card(x)));
+      }).catch((er) => failed(list, er));
+    }
+    view.addEventListener('change', load);
+    c.appendChild(h('h2', { text: 'Harita reklamları' }));
+    c.appendChild(h('p', { class: 'small muted', text: 'Sponsor ve işyerlerinin Rota coin ile verdiği harita reklamları (reklam deposu sunucuda). Kuryeler, rotalarındaki aktif reklamları haritada görür. Uygunsuz reklamı kaldırın: reklam haritadan iner, sahibine bildirim gider; coin iadesi gerekiyorsa Üyeler › üye › “Coin düzelt” ile yapılır.' }));
+    c.appendChild(h('div', { class: 'row' }, view));
+    c.appendChild(list);
+    load();
+  }
+
   // ------------------------------------------------------------------ Logolar (1.14.1: profil fotoğrafı yok; yalnız işletme logosu)
+  // ------------------------------------------------------------------ 1.20.0: doğrulama kodları ve giriş kilidi
+  function capsLine(caps) {
+    const part = (on, name) => name + ': ' + (on ? 'bağlı ✓' : 'bağlı değil (deneme modu)');
+    return h('p', { class: 'small ' + (caps.sms && caps.email ? 'muted' : 'warn'), text: part(caps.sms, 'SMS') + ' · ' + part(caps.email, 'E-posta') + '. Servis bağlı değilken kod kişiye gitmez; kişinin kimliğini doğruladıktan sonra kodu siz söylersiniz.' });
+  }
+  function codeItem(x, showUser) {
+    const out = h('span');
+    const label = h('span', null, h('b', { text: x.purposeLabel }), ' ', h('span', { class: 'pill' + (x.status === 'live' ? ' ok' : ''), text: KSTATUS[x.status] || x.status }), ' ',
+      x.delivered ? h('span', { class: 'pill', text: 'ulaştı (' + (x.channel === 'email' ? 'e-posta' : 'SMS') + ')' }) : h('span', { class: 'pill warn', text: 'kişiye ulaşmadı' }));
+    const meta = h('span', { class: 'muted small', text: [x.channel === 'email' ? 'e-posta ' + x.target : 'SMS ' + x.target, 'yanlış deneme: ' + x.attempts, 'son geçerlilik: ' + when(x.expiresAt)].join(' · ') });
+    const row = h('div', { class: 'ev' }, h('span', { class: 't', text: when(x.at) }), h('span', null, label, ' ', showUser && x.userName ? h('button', { type: 'button', class: 'btn small ghost', text: x.userName + (x.userNo ? ' · ' + (PFX[x.role] || 'KRY') + '-' + x.userNo : ''), onclick: () => openUser(x.userId) }) : null, h('br'), meta, ' ', out));
+    if (x.canReveal) {
+      out.appendChild(confirmBtn('Kodu göster', 'ghost', 'Kişinin kimliğini doğruladınız mı? (bakış günlüğe yazılır)', () => {
+        api('POST', '/v1/admin/codes/' + x.id + '/reveal').then((r) => {
+          clear(out);
+          out.appendChild(h('span', { class: 'big code', id: 'code-' + x.id, text: r.code }));
+          out.appendChild(h('span', { class: 'small muted', text: ' · ' + when(r.expiresAt) + "'e kadar geçerli. Kişiye sözle söyleyin." }));
+        }).catch((er) => { clear(out); out.appendChild(h('span', { class: 'msg bad', text: er.message })); });
+      }));
+    }
+    return row;
+  }
+  function securityBox(uid) {
+    const box = h('div', { class: 'box' }, h('h3', { text: 'Giriş ve güvenlik' }), h('p', { class: 'muted small', text: 'Yükleniyor…' }));
+    const msg = h('div', { class: 'msg', role: 'status' });
+    function load() {
+      api('GET', '/v1/admin/users/' + encodeURIComponent(uid) + '/security').then((s) => {
+        clear(box);
+        box.appendChild(h('h3', { text: 'Giriş ve güvenlik' }));
+        box.appendChild(kv([
+          ['E-posta', s.emailVerifiedAt ? 'doğrulandı ✓ (' + when(s.emailVerifiedAt) + ')' : 'doğrulanmadı'],
+          ['Telefon', s.phoneVerifiedAt ? 'doğrulandı ✓ (' + when(s.phoneVerifiedAt) + ')' : 'doğrulanmadı'],
+          ['Giriş kilidi', s.lock.locked ? 'KİLİTLİ · ' + when(s.lock.until) + "'e kadar (" + s.lock.fails + ' yanlış şifre)' : (s.lock.fails ? 'açık · son 24 saatte ' + s.lock.fails + ' yanlış şifre' : 'açık')],
+        ]));
+        if (s.lock.locked || s.lock.fails) {
+          box.appendChild(confirmBtn('Kilidi aç', 'ghost', 'Yanlış şifre sayacı sıfırlansın mı?', () => {
+            api('POST', '/v1/admin/users/' + uid + '/unlock').then(() => { say(msg, 'Kilit açıldı.', 'ok'); load(); }).catch((er) => say(msg, er.message, 'bad'));
+          }));
+        }
+        box.appendChild(h('h4', { text: 'Son 24 saatin kodları' }));
+        if (!s.codes.length) box.appendChild(h('p', { class: 'muted small', text: 'Kod istenmedi.' }));
+        s.codes.forEach((x) => box.appendChild(codeItem(x, false)));
+        box.appendChild(capsLine(s.caps));
+        box.appendChild(msg);
+      }).catch((er) => { clear(box); box.appendChild(h('h3', { text: 'Giriş ve güvenlik' })); box.appendChild(h('p', { class: 'msg bad', text: er.message })); });
+    }
+    load();
+    return box;
+  }
+  // ------------------------------------------------------------------ Kapı haritası (1.21.0)
+  // Kuryelerin teslimatlarıyla dolan ortak kapı katmanı: il › ilçe › mahalle › sokak kırılımı, haritada noktalar (doğrulanmış turkuaz,
+  // bekleyen sarı, tartışmalı pembe, gizli lacivert), nokta ayrıntısı, yanlış noktayı silme, CSV. Kişi bilgisi yok.
+  function kmLevelName() { return km.s ? 'sokak' : km.n ? 'mahalle' : km.d ? 'ilçe' : 'Türkiye'; }
+  function kmGo(o) { Object.assign(km, o); tabKapi(); }
+
+  function tabKapi() {
+    const c = ctx.content;
+    if (km.map) { try { km.map.remove(); } catch (e) { /* */ } km.map = null; }
+    loading(c);
+    api('GET', '/v1/admin/doors/summary?' + qs({ p: km.p, d: km.d, n: km.n })).then((s) => {
+      clear(c);
+      const t = s.totals;
+      const stat = (n, label, st) => h('div', { class: 'stat' }, h('b', { text: String(n) }), st !== undefined
+        ? h('button', { type: 'button', class: 'lnk', text: label + ' ›', onclick: () => kmGo({ status: st }) }) : h('span', { class: 'muted', text: label }));
+      c.appendChild(h('h2', { text: 'Kapı haritası' }));
+      c.appendChild(h('p', { class: 'small muted', text: 'Kuryelerin teslimatlarıyla dolan ortak kapı katmanı: sokak adı, bina numarası, site adı ve nokta. Kişi bilgisi (ad, telefon, daire, kat) tutulmaz.' }));
+      c.appendChild(h('div', { class: 'cards' },
+        stat(t.total, 'Kapı noktası', ''), stat(t.verified, 'Doğrulanmış', 'verified'), stat(t.pending, 'Bekliyor (tek bildirim)', 'pending'),
+        stat(t.disputed, 'Tartışmalı', 'disputed'), stat(t.hidden, 'Gizli', 'hidden'), stat(t.new7d, 'Son 7 gün yeni')));
+
+      // yol: Türkiye › ilçe › mahalle › sokak
+      const crumbs = h('nav', { class: 'row crumbs', 'aria-label': 'Konum' });
+      const crumb = (label, o, on) => on ? h('button', { type: 'button', class: 'lnk', text: label, onclick: () => kmGo(o) }) : h('b', { text: label });
+      crumbs.appendChild(crumb('Türkiye', { p: '', d: '', n: '', s: '', k: '', dName: '', nName: '', sName: '' }, !!km.d));
+      if (km.d) { crumbs.appendChild(h('span', { class: 'muted', text: '›' })); crumbs.appendChild(crumb(km.dName, { n: '', s: '', k: '', nName: '', sName: '' }, !!km.n)); }
+      if (km.n) { crumbs.appendChild(h('span', { class: 'muted', text: '›' })); crumbs.appendChild(crumb(km.nName, { s: '', k: '', sName: '' }, !!km.s)); }
+      if (km.s) { crumbs.appendChild(h('span', { class: 'muted', text: '›' })); crumbs.appendChild(h('b', { text: km.sName })); }
+
+      const status = h('select', { 'aria-label': 'Durum', onchange: () => kmGo({ status: status.value }) },
+        h('option', { value: '', text: 'Bütün noktalar' }), ...Object.keys(KST).map((k) => h('option', { value: k, text: KST[k], selected: km.status === k })));
+      const dm = h('span', { class: 'msg', role: 'status' });
+      const csvBtn = h('button', { type: 'button', class: 'btn small ghost', text: 'CSV indir', onclick: () => kmCsv(csvBtn, dm) });
+      c.appendChild(h('div', { class: 'row' }, crumbs, h('span', { class: 'grow' }), status, csvBtn));
+      c.appendChild(dm);
+
+      const mapEl = h('div', { id: 'kmap', class: 'kmap-map', role: 'region', 'aria-label': 'Kapı noktaları haritası' });
+      const side = h('div', { class: 'kmap-side' });
+      const detail = h('div', { id: 'kdetail', class: 'box', hidden: true, 'aria-live': 'polite' });
+      const legend = h('div', { class: 'legend' }, ...Object.keys(KST).map((k) => h('span', null, h('i', { class: 'k-' + k }), KST[k])));
+      c.appendChild(h('div', { class: 'kmap' }, h('div', null, mapEl, legend, detail), side));
+
+      // yan liste: bir alt düzey
+      const lvl = { district: 'İlçeler', neighborhood: 'Mahalleler', street: 'Sokaklar' }[s.level];
+      side.appendChild(h('h3', { text: lvl + ' (' + s.items.length + (s.more ? '+' : '') + ')' }));
+      if (!s.items.length) side.appendChild(h('p', { class: 'muted', text: 'Bu düzeyde henüz kapı noktası yok.' }));
+      s.items.forEach((x) => {
+        const pct = x.total ? Math.round((x.verified / x.total) * 100) : 0;
+        const label = s.level === 'street' ? x.street : x.name + (s.level === 'district' && x.province ? ' · ' + x.province : '');
+        const sub = (s.level === 'street' ? x.doors + ' kapı numarası · ' : x.total + ' nokta · ') + x.verified + ' doğrulanmış' + (x.disputed ? ' · ' + x.disputed + ' tartışmalı' : '');
+        const on = s.level === 'street' && km.s === x.s && km.k === x.k;
+        side.appendChild(h('button', { type: 'button', class: 'item' + (on ? ' on' : ''), 'aria-pressed': on ? 'true' : 'false', onclick: () => {
+          if (s.level === 'district') kmGo({ p: x.p, d: x.d, dName: x.district || x.name, n: '', s: '', k: '', nName: '', sName: '' });
+          else if (s.level === 'neighborhood') kmGo({ p: x.p, n: x.n, nName: x.neighborhood || x.name, s: '', k: '', sName: '' });
+          else kmGo(on ? { s: '', k: '', sName: '' } : { s: x.s, k: x.k, sName: x.street });
+        } }, h('span', null, h('span', { class: 'nm', text: label }), h('br'), h('span', { class: 'small muted', text: sub }),
+          h('span', { class: 'bar', title: '%' + pct + ' doğrulanmış' }, h('span', { style: 'width:' + pct + '%' }))), h('span', { class: 'muted', text: '›' })));
+      });
+      if (s.more) side.appendChild(h('p', { class: 'small muted', text: s.more + ' satır daha var; üstteki yoldan daralt.' }));
+
+      kmMap(mapEl, s, detail);
+    }).catch((er) => failed(c, er));
+  }
+
+  function kmMap(el, s, detail) {
+    if (!window.L) { el.appendChild(h('p', { class: 'pad muted', text: 'Harita yüklenemedi; listeler yine çalışır.' })); return; }
+    const L = window.L;
+    const map = L.map(el, { zoomControl: true, attributionControl: true }).setView([39.0, 35.2], 6);
+    km.map = map;
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> katkıcıları' }).addTo(map);
+    const group = L.featureGroup().addTo(map);
+    if (!km.d) {
+      // Türkiye düzeyi: ilçe başına bir daire (büyüklüğü nokta sayısı); tıklayınca ilçeye in
+      s.items.filter((x) => x.lat != null).forEach((x) => {
+        const r = Math.max(7, Math.min(28, 5 + Math.sqrt(x.total) * 2));
+        const col = x.verified ? KCOL.verified : KCOL.pending;
+        L.circleMarker([x.lat, x.lon], { radius: r, color: '#0D1B2A', weight: 1.5, fillColor: col, fillOpacity: 0.85 })
+          .bindTooltip(x.name + ': ' + x.total + ' nokta, ' + x.verified + ' doğrulanmış', { direction: 'top', offset: [0, -6] })
+          .on('click', () => kmGo({ p: x.p, d: x.d, dName: x.district || x.name }))
+          .addTo(group);
+      });
+      if (group.getLayers().length) map.fitBounds(group.getBounds().pad(0.2), { maxZoom: 12 });
+      return;
+    }
+    api('GET', '/v1/admin/doors?' + qs({ p: km.p, d: km.d, n: km.n, s: km.s, k: km.s ? km.k : '', status: km.status, limit: 3000 })).then((r) => {
+      r.items.forEach((x) => {
+        L.circleMarker([x.lat, x.lon], {
+          radius: x.status === 'verified' ? 7 : 6, color: x.status === 'hidden' ? '#FF4DA6' : '#0D1B2A', weight: x.status === 'hidden' ? 2 : 1.2,
+          fillColor: KCOL[x.status], fillOpacity: x.status === 'hidden' ? 0.55 : 0.9,
+        }).bindTooltip(x.street + ' No ' + x.door + (x.site ? ' · ' + x.site : '') + ' — ' + KST[x.status], { direction: 'top', offset: [0, -6] })
+          .on('click', () => kmDetail(x.id, detail))
+          .addTo(group);
+      });
+      if (group.getLayers().length) map.fitBounds(group.getBounds().pad(0.15), { maxZoom: 18 });
+      if (r.total > r.items.length) detail.parentNode.insertBefore(h('p', { class: 'small muted', text: r.total + ' noktanın en yeni ' + r.items.length + ' tanesi gösteriliyor; mahalle ya da sokak seçerek daralt.' }), detail);
+    }).catch((er) => { el.appendChild(h('p', { class: 'msg bad', text: er.message })); });
+  }
+
+  function kmDetail(id, box) {
+    box.hidden = false;
+    loading(box);
+    api('GET', '/v1/admin/doors/' + encodeURIComponent(id)).then((x) => {
+      clear(box);
+      const pill = h('span', { class: 'pill ' + ({ verified: 'ok', pending: 'warn', disputed: 'bad', hidden: 'bad' })[x.status], text: KST[x.status] });
+      box.appendChild(h('h3', null, x.street + ' No ' + x.door + ' ', pill));
+      const kv = h('dl', { class: 'kv' });
+      const row = (k, v) => { kv.appendChild(h('dt', { text: k })); kv.appendChild(h('dd', { text: v })); };
+      if (x.site) row('Site / bina', x.site);
+      row('Yer', x.place || '—');
+      row('Onaylayan', x.confirms + ' kişi · puan ' + x.score + (x.wrong ? ' · yanlış puanı ' + x.wrong : ''));
+      x.votes.forEach((v) => row(v.vote === 'wrong' ? '“Yanlış” oyu' : 'Onay', (KSRC[v.source] || v.source) + ' × ' + v.count + ' · son ' + when(v.last)));
+      if (x.rivals) row('Çelişen aday', 'Aynı kapı numarası için ' + x.rivals + ' başka nokta daha var (en yüksek puanlı gösterilir)');
+      row('İlk bildirim', when(x.created));
+      row('Son güncelleme', when(x.updated));
+      row('Konum', x.lat.toFixed(6) + ', ' + x.lon.toFixed(6));
+      box.appendChild(kv);
+      const m = h('div', { class: 'msg', role: 'status' });
+      box.appendChild(h('div', { class: 'row' },
+        h('a', { href: 'https://www.openstreetmap.org/?mlat=' + x.lat + '&mlon=' + x.lon + '#map=19/' + x.lat + '/' + x.lon, target: '_blank', rel: 'noopener noreferrer', text: 'OpenStreetMap’te aç' }),
+        h('span', { class: 'grow' }),
+        confirmBtn('Bu noktayı sil', 'ghost', 'Nokta ve oyları silinsin mi? (yeni teslimler yeniden bildirebilir)', () => {
+          api('DELETE', '/v1/admin/doors/' + encodeURIComponent(x.id)).then(() => { tabKapi(); }).catch((er) => say(m, er.message, 'bad'));
+        })), m);
+      box.appendChild(h('p', { class: 'small muted', text: 'Oy verenler gösterilmez: katmanda kim bildirdi bilgisi yalnız geri çevrilemez bir kod olarak tutulur.' }));
+      try { box.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) { /* */ }
+    }).catch((er) => failed(box, er));
+  }
+
+  function kmCsv(btn, msg) {
+    btn.disabled = true;
+    say(msg, 'Hazırlanıyor…');
+    fetch('/v1/admin/doors/export?' + qs({ p: km.p, d: km.d, n: km.n, status: km.status }), { headers: { Authorization: 'Bearer ' + token }, cache: 'no-store' })
+      .then((r) => {
+        if (!r.ok) throw new Error('İndirilemedi (' + r.status + ')');
+        const m = /filename="([^"]+)"/.exec(r.headers.get('content-disposition') || '');
+        return r.blob().then((b) => [b, m ? m[1] : 'rota-kapi-haritasi.csv']);
+      })
+      .then(([b, name]) => {
+        const u = URL.createObjectURL(b);
+        const a = h('a', { href: u, download: name, hidden: true });
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(u), 5000);
+        say(msg, 'İndirildi: ' + name + ' (' + kmLevelName() + (km.status ? ', ' + KST[km.status].toLowerCase() : '') + ')', 'ok');
+      })
+      .catch((er) => say(msg, er.message, 'bad'))
+      .then(() => { btn.disabled = false; });
+  }
+
+  function tabKodlar() {
+    const c = ctx.content; loading(c);
+    api('GET', '/v1/admin/codes?hours=24').then((r) => {
+      clear(c);
+      c.appendChild(h('h2', { text: 'Doğrulama kodları' }));
+      c.appendChild(h('p', { class: 'small muted', text: 'Şifremi unuttum, e-posta / telefon doğrulama ve telefon değiştirme kodları (son 24 saat). Kodun kendisi listede yoktur: kişiye ulaşmamış geçerli kod için “Kodu göster”. Kod 6 hanelidir; şifre yenileme kodu 15 dakika geçerlidir.' }));
+      c.appendChild(capsLine(r.caps));
+      if (!r.items.length) c.appendChild(h('p', { class: 'muted', text: 'Son 24 saatte kod istenmedi.' }));
+      r.items.forEach((x) => c.appendChild(codeItem(x, true)));
+      c.appendChild(h('button', { type: 'button', class: 'btn small ghost', text: 'Yenile', onclick: () => tabKodlar() }));
+    }).catch((er) => failed(c, er));
+  }
+
   function tabLogolar() {
     const c = ctx.content;
     const list = h('div', { class: 'logos' }); const info = h('div', { class: 'msg', role: 'status' });

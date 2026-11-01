@@ -32,9 +32,11 @@ from . import events, reviews as rv
 from .auth import ALGO, DUMMY_HASH, SECRET, check_pw, hash_pw, norm_email, norm_phone, norm_username
 from .db import get_db
 from .errors import summarize as errors_summary
+from .standing import mark_out, marks_of, standings
 from .follow import trail_of
+from .pushes import drop_user as drop_user_pushes
 from .limits import Window, client_ip
-from .models import Admin, AdminAudit, ConsentLog, Device, DoorPoint, Event, Follow, Handoff, Job, Review, User, now
+from .models import Admin, AdminAudit, ConsentLog, Device, DoorPoint, Event, Follow, Handoff, Job, Review, Reward, RewardClaim, User, UserMark, now
 
 ROLES = ("courier", "employer", "sponsor")
 ADMIN_TOKEN_HOURS = 12
@@ -398,12 +400,14 @@ def make_router(keep_days_errors: float = 14, follow_keep_hours: float = 48) -> 
     @r.get("/v1/admin/stats")
     def stats(a: Admin = Depends(current_admin), db: Session = Depends(get_db)):
         t = now()
-        by_role = dict(db.query(User.active_role, func.count(User.id)).group_by(User.active_role).all())
+        live = User.deleted_at.is_(None)  # 1.20.0: silinen hesaplar sayılmaz
+        by_role = dict(db.query(User.active_role, func.count(User.id)).filter(live).group_by(User.active_role).all())
         return {
-            "users": db.query(func.count(User.id)).scalar() or 0,
+            "users": db.query(func.count(User.id)).filter(live).scalar() or 0,
+            "deleted30d": db.query(func.count(User.id)).filter(User.deleted_at >= t - timedelta(days=30)).scalar() or 0,
             "byRole": {k: by_role.get(k, 0) for k in ROLES},
-            "banned": db.query(func.count(User.id)).filter(User.banned.is_(True)).scalar() or 0,
-            "newUsers7d": db.query(func.count(User.id)).filter(User.created_at >= t - timedelta(days=7)).scalar() or 0,
+            "banned": db.query(func.count(User.id)).filter(User.banned.is_(True), live).scalar() or 0,
+            "newUsers7d": db.query(func.count(User.id)).filter(User.created_at >= t - timedelta(days=7), live).scalar() or 0,
             "logins24h": db.query(func.count(func.distinct(Event.user_id))).filter(Event.kind == "user.login", Event.created_at >= t - timedelta(hours=24)).scalar() or 0,
             "openJobs": db.query(func.count(Job.id)).filter(Job.status == "open").scalar() or 0,
             "activeHandoffs": db.query(func.count(Handoff.id)).filter(Handoff.closed_at.is_(None)).scalar() or 0,
@@ -423,6 +427,8 @@ def make_router(keep_days_errors: float = 14, follow_keep_hours: float = 48) -> 
             "id": u.id, "userNo": u.public_no or "", "name": u.name, "phone": u.phone, "username": u.username, "email": u.email, "role": u.active_role,
             "banned": bool(u.banned), "bannedReason": u.banned_reason or "", "bannedAt": iso(u.banned_at),
             "mustChangePassword": bool(u.must_change_password), "createdAt": iso(u.created_at), "lastLoginAt": iso(u.last_login_at),
+            # 1.20.0: hesap güvenliği
+            "emailVerified": bool(u.email_verified_at), "phoneVerified": bool(u.phone_verified_at), "deleted": bool(u.deleted_at), "deletedAt": iso(u.deleted_at),
         }
 
     def get_user(db: Session, uid_: str) -> User:
@@ -456,10 +462,17 @@ def make_router(keep_days_errors: float = 14, follow_keep_hours: float = 48) -> 
             qs = qs.filter(User.banned.is_(True))
         elif banned == "0":
             qs = qs.filter(User.banned.is_not(True))
+        if banned == "bl":  # 1.16.0: kara listedekiler
+            qs = qs.filter(User.id.in_(db.query(UserMark.user_id).filter(UserMark.blacklisted.is_(True))))
+        if banned == "del":  # 1.20.0: hesabını silenler (kişisel bilgisi silinmiş satırlar)
+            qs = qs.filter(User.deleted_at.is_not(None))
+        elif banned in ("0", "1"):
+            qs = qs.filter(User.deleted_at.is_(None))
         total = qs.count()
         order = {"new": User.created_at.desc(), "old": User.created_at.asc(), "login": User.last_login_at.desc(), "name": func.lower(User.name).asc()}.get(sort, User.created_at.desc())
         rows = qs.order_by(order).offset(offset).limit(limit).all()
-        return {"total": total, "items": [user_row(u) for u in rows]}
+        marks = marks_of(db, {u.id for u in rows})
+        return {"total": total, "items": [{**user_row(u), "blacklisted": bool(marks.get(u.id) and marks[u.id].blacklisted)} for u in rows]}
 
     @r.get("/v1/admin/users/{uid_}")
     def user_detail(uid_: str, a: Admin = Depends(current_admin), db: Session = Depends(get_db)):
@@ -488,6 +501,9 @@ def make_router(keep_days_errors: float = 14, follow_keep_hours: float = 48) -> 
             "rating": {"courier": rv.courier_summary(db, u.id), "employer": rv.employer_reps(db, [u.id])[u.id]},
             "reviewsReceived": [review_row(x, db) for x in got],
             "reviewsWritten": [review_row(x, db) for x in wrote],
+            # 1.16.0: kara liste + yönetim notu, öne çıkarma / af; ödül koyduysa karnesi
+            "mark": mark_out(marks_of(db, {u.id}).get(u.id)),
+            "standing": standings(db, {u.id})[u.id] if (db.query(Reward.id).filter(Reward.owner_id == u.id).first() or db.query(RewardClaim.id).filter(RewardClaim.owner_id == u.id).first()) else None,
         })
         return d
 
@@ -495,6 +511,8 @@ def make_router(keep_days_errors: float = 14, follow_keep_hours: float = 48) -> 
     def user_edit(uid_: str, b: UserEditIn, request: Request, a: Admin = Depends(current_admin), db: Session = Depends(get_db)):
         """Üyenin hesap bilgilerini düzenler (ad, telefon, kullanıcı adı, e-posta, hesap türü). Gönderilmeyen alana dokunulmaz."""
         u = get_user(db, uid_)
+        if u.deleted_at is not None:
+            raise HTTPException(409, "Bu hesap silindi; düzenlenemez.")
         changed: list[str] = []
         if b.name is not None:
             name = b.name.strip()
@@ -510,6 +528,7 @@ def make_router(keep_days_errors: float = 14, follow_keep_hours: float = 48) -> 
                     raise HTTPException(400, "Bu telefon başka bir hesapta kayıtlı")
                 changed.append(f"telefon {mask_phone(u.phone)}→{mask_phone(ph)}")
                 u.phone = ph
+                u.phone_verified_at = None  # 1.20.0: yeni numara doğrulanmadı
         if b.username is not None:
             un = norm_username(b.username)
             if (un or None) != u.username:
@@ -522,6 +541,7 @@ def make_router(keep_days_errors: float = 14, follow_keep_hours: float = 48) -> 
             if (em or None) != u.email:
                 changed.append(f"e-posta {mask_email(u.email)}→{mask_email(em)}")
                 u.email = em or None
+                u.email_verified_at = None  # 1.20.0: yeni adres doğrulanmadı
         if b.role is not None:
             if b.role not in ROLES:
                 raise HTTPException(400, "Hesap türü kurye, işveren veya sponsor olmalı")
@@ -547,6 +567,7 @@ def make_router(keep_days_errors: float = 14, follow_keep_hours: float = 48) -> 
             raise HTTPException(400, "Men nedenini yazın (kullanıcıya gösterilir)")
         u.banned, u.banned_reason, u.banned_at = True, reason[:300], now()
         u.token_version = (u.token_version or 0) + 1
+        drop_user_pushes(db, u.id)  # 1.20.0: çıkış yapan cihazlara bildirim gitmesin
         closed = db.query(Job).filter(Job.employer_id == u.id, Job.status.in_(("open", "applied"))).update({"status": "closed"}, synchronize_session=False)
         audit(db, request, a, "user_ban", "user", u.id, f"{reason[:200]} · kapanan ilan: {closed}")
         events.log(db, "user.banned", u.id, by=a.username, reason=reason[:100])
@@ -577,6 +598,7 @@ def make_router(keep_days_errors: float = 14, follow_keep_hours: float = 48) -> 
         u.password_hash = hash_pw(temp)
         u.must_change_password = True
         u.token_version = (u.token_version or 0) + 1
+        drop_user_pushes(db, u.id)
         audit(db, request, a, "user_password", "user", u.id, "geçici şifre üretildi" if generated else "şifre belirlendi")
         events.log(db, "user.reset", u.id, by=a.username)
         db.commit()
@@ -586,6 +608,7 @@ def make_router(keep_days_errors: float = 14, follow_keep_hours: float = 48) -> 
     def user_logout(uid_: str, request: Request, a: Admin = Depends(current_admin), db: Session = Depends(get_db)):
         u = get_user(db, uid_)
         u.token_version = (u.token_version or 0) + 1
+        drop_user_pushes(db, u.id)
         audit(db, request, a, "user_logout", "user", u.id)
         db.commit()
         return {"ok": True}

@@ -4,7 +4,8 @@ import re
 import threading
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from html import escape as html_escape
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -12,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from sqlalchemy import case
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -33,14 +35,20 @@ from .db import Base, engine, get_db
 from .limits import Window
 from .geo import sort_packages
 from .doors import make_router as make_doors_router
+from .doormap import make_router as make_doormap_router
 from .admin import make_router as make_admin_router
 from .errors import make_router as make_errors_router
 from .follow import make_router as make_follow_router
 from .tasks import OPEN as TASK_OPEN, end_tasks_for_job, make_router as make_tasks_router, people_of as task_people
 from .logos import logo_version, make_router as make_logos_router
+from .points import make_router as make_points_router
+from .account import PROMO_COIN_PER_DAY, charge as coin_charge, make_router as make_account_router, ms as ms_of
+from .marks import make_router as make_marks_router
 from .nearby import make_router as make_nearby_router
 from .vehicle import make_router as make_vehicle_router, withdraw as vehicle_withdraw
 from .handoff import make_router as make_handoff_router
+from .pushes import drop_user as drop_user_pushes, make_router as make_push_router, queue_job_area as push_queue_job_area
+from . import security as sec
 from .migrate import ensure_schema
 from .relay import make_router
 from .reviews import make_router as make_reviews_router
@@ -101,6 +109,19 @@ FOLLOW_TRAIL_MAX = int(os.getenv("FOLLOW_TRAIL_MAX", "4000"))  # bir takip için
 TASK_MAX_HOURS = float(os.getenv("TASK_MAX_HOURS", "24"))  # açık görev en çok bu kadar saat sürer (kabulden; kabul yoksa paylaşımdan)
 TASK_KEEP_HOURS = float(os.getenv("TASK_KEEP_HOURS", "48"))  # biten görev kaydı bu kadar saat saklanır, sonra silinir
 VEHICLE_VIEW_PER_MIN = int(os.getenv("VEHICLE_VIEW_PER_MIN", "90"))  # bir işletmenin dakikada bakabileceği kurye araç profili sayısı
+# 1.15.0: puan ve ödül (kullanıcı kararları 26–27 Ekim 2026)
+POINTS_DAILY_MAX = int(os.getenv("POINTS_DAILY_MAX", "600"))  # kurye günde en çok bu kadar puan (60 doğrulanmış teslim)
+POINT_TL = float(os.getenv("POINT_TL", "0.10"))  # 1 puanın referans değeri (TL): 3000 puan ≈ 300 TL'lik ürün
+REWARD_VALUE_MIN_RATIO = float(os.getenv("REWARD_VALUE_MIN_RATIO", "0.8"))  # ürün değeri basamağın TL karşılığının en az bu oranı
+REWARD_VALUE_MAX_RATIO = float(os.getenv("REWARD_VALUE_MAX_RATIO", "1.5"))  # … ve en çok bu oranı (3000 puan → 240–450 TL)
+POINTS_EXPIRE_DAYS = float(os.getenv("POINTS_EXPIRE_DAYS", "365"))  # kullanılmayan puan bu kadar gün sonra düşer
+REWARD_SHIP_DAYS = float(os.getenv("REWARD_SHIP_DAYS", "7"))  # ödülü koyan bu kadar gün içinde kargolar; yoksa puan iade
+REWARD_ANSWER_DAYS = float(os.getenv("REWARD_ANSWER_DAYS", "14"))  # kargodan sonra kurye bu kadar gün cevap vermezse "teslim alındı"
+DELIVERY_PROOF_KEEP_DAYS = float(os.getenv("DELIVERY_PROOF_KEEP_DAYS", "30"))  # teslim doğrulama kayıtları (adres yok) bu kadar gün
+NOTICE_KEEP_DAYS = float(os.getenv("NOTICE_KEEP_DAYS", "30"))  # alınmayan sistem bildirimi bu kadar gün
+# 1.17.0: hesap verisi sunucuda (kullanıcı kararı 28 Ekim 2026). Mağaza satın alması bağlanana kadar coin "test satın alma" ile yüklenir;
+# 0 yazılırsa kapanır (yayında mağaza makbuzu doğrulaması gelince kapatılacak). Rehber yedeğinin 24 saati sabittir (uzatılamaz).
+COIN_TEST_BUY = os.getenv("COIN_TEST_BUY", "1") != "0"
 
 
 @asynccontextmanager
@@ -109,6 +130,9 @@ async def lifespan(_app):
     threading.Thread(target=handoff_router.loop, name="handoff-purge", daemon=True).start()  # süresi dolan teslim bağlantılarını siler
     follow_router.start_cleaner()  # süresi dolan takipleri kapatır, eski konum noktalarını siler
     tasks_router.start_cleaner()  # süresi dolan görevleri kapatır, biten görevleri 48 saat sonra siler
+    points_router.start_cleaner()  # 1.15.0: ödül süreleri (7 gün kargo / 14 gün cevap), 12 ay puan düşmesi, eski kayıtlar
+    account_router.start_cleaner()  # 1.17.0: 24 saati dolan rehber yedeklerini, çok eski reklam kayıtlarını siler
+    push_router.start_cleaner()  # 1.19.0: Expo bildirim biletlerini denetler (cihazı kalmayan jetonu siler)
     threading.Thread(target=_housekeeping_loop, name="housekeeping", daemon=True).start()
     yield
 
@@ -124,13 +148,14 @@ def _housekeeping_loop():
             try:
                 errors_router.purge(db)
                 admin_router.purge(db, EVENT_KEEP_DAYS, AUDIT_KEEP_DAYS, REVIEW_KEEP_DAYS, EVENT_MAX_ROWS)
+                sec.purge(db)  # 1.20.0: süresi dolan doğrulama kodları ve eski giriş kilidi satırları
             finally:
                 db.close()
         except Exception as e:
             print("[temizlik] hata:", type(e).__name__, flush=True)
 
 
-app = FastAPI(title="Rota Asistan", version="1.14.1", lifespan=lifespan)
+app = FastAPI(title="Rota Asistan", version="1.21.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -146,6 +171,12 @@ PUBLIC_BASE = os.getenv("PUBLIC_BASE", "").rstrip("/")
 async def _blocked_handler(_request: Request, exc: AccountBlocked):
     """Askıya alınmış hesap: uygulama `code: banned` görünce oturumu kapatır ve nedeni gösterir."""
     return JSONResponse(status_code=403, content={"detail": exc.detail, "code": exc.code, "reason": exc.reason})
+
+
+@app.exception_handler(sec.LoginLocked)
+async def _locked_handler(_request: Request, exc: sec.LoginLocked):
+    """1.20.0: çok fazla yanlış şifre — uygulama `code: locked` görünce "Şifremi unuttum"u öne çıkarır."""
+    return JSONResponse(status_code=429, content={"detail": exc.detail, "code": exc.code, "retryAfter": exc.retry_after}, headers={"Retry-After": str(exc.retry_after)})
 
 
 @app.exception_handler(RequestValidationError)
@@ -183,6 +214,7 @@ relay_router = make_router(RELAY_TTL_DAYS, RELAY_MAX_BYTES, RELAY_USER_MAX_BYTES
 app.include_router(relay_router)
 doors_router = make_doors_router(DOOR_DAILY_MAX, DOOR_REQUIRE_CONSENT, DOOR_TRUST_SCORE, DOOR_MERGE_M)
 app.include_router(doors_router)
+# 1.18.0: alıcıya süreç takibi (Hazırlanıyor → Yolda → Teslim edildi), işverenin "📦 Yola çıktı"sı, alıcı izin verirse tarayıcı bildirimi
 handoff_router = make_handoff_router(doors_router.add_recipient_pin, HANDOFF_TTL_HOURS, HANDOFF_DAILY_MAX, HANDOFF_REVIEW_HOURS)
 app.include_router(handoff_router)
 app.include_router(make_reviews_router())
@@ -198,7 +230,24 @@ errors_router = make_errors_router(ERROR_KEEP_DAYS, ERROR_MAX_ROWS, ERROR_DAILY_
 app.include_router(errors_router)
 admin_router = make_admin_router(ERROR_KEEP_DAYS, FOLLOW_KEEP_HOURS)
 app.include_router(make_logos_router(current_user))  # 1.14.1: işletme logosu (profil fotoğrafı yok)
+points_router = make_points_router(  # 1.15.0: puan defteri (doğrulanmış teslim) + ödül süreci + sistem bildirimleri
+    POINTS_DAILY_MAX, POINT_TL, REWARD_VALUE_MIN_RATIO, POINTS_EXPIRE_DAYS, REWARD_SHIP_DAYS, REWARD_ANSWER_DAYS, DELIVERY_PROOF_KEEP_DAYS, NOTICE_KEEP_DAYS,
+    value_max_ratio=REWARD_VALUE_MAX_RATIO,
+)
+app.include_router(points_router)
+app.include_router(make_marks_router())  # 1.16.0: sponsor karnesi, öne çıkarma, af, kara liste (+ not)
+# 1.17.0: hesap verisi sunucuda tek kaynak (bölümler + eşitleme saati), coin defteri, reklam deposu, öne çıkan ilan, 24 saatlik rehber yedeği
+account_router = make_account_router(lambda u: user_out(u), COIN_TEST_BUY)
+app.include_router(account_router)
+# 1.19.0: kurye ve işletme telefonuna bildirim (Expo, ücretsiz) + web ikizinde tarayıcı bildirimi; metinde kişisel bilgi yok
+push_router = make_push_router()
+app.include_router(push_router)
+# 1.20.0: hesap güvenliği (giriş kilidi, şifremi unuttum, e-posta / telefon doğrulama, tüm cihazlardan çıkış, hesap silme, yönetim › kodlar)
+security_router = sec.make_router(lambda u: user_out(u))
+app.include_router(security_router)
 app.include_router(admin_router)
+# 1.21.0: Yönetim › Kapı haritası (ortak kapı katmanının önizlemesi: özet, noktalar, ayrıntı, silme, CSV)
+app.include_router(make_doormap_router(DOOR_TRUST_SCORE))
 app.include_router(make_web_router())  # /web: uygulamanın tarayıcı sürümü (web ikizi)
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -206,7 +255,9 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Alıcı sayfası ve yönetim sayfası: kod / anahtar içeren adresler önbelleğe alınmaz, adres başka sitelere sızdırılmaz,
 # çerçeve içine alınamaz; betikler yalnız kendi sunucumuzdan yüklenir (harita karoları OpenStreetMap'ten).
-_SECURE_PREFIXES = ("/a/", "/yonetim")
+_SECURE_PREFIXES = ("/a/", "/yonetim", "/hesap-sil")
+# 1.20.1: herkese açık yasal / destek sayfaları (mağazaların istediği gizlilik ve destek adresleri). Betik yok; önbellek kısa.
+_PUBLIC_PAGES = ("/gizlilik", "/kosullar", "/destek")
 _CSP = (
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
     "img-src 'self' data: https://tile.openstreetmap.org https://*.tile.openstreetmap.org; connect-src 'self'; "
@@ -224,6 +275,15 @@ async def secure_headers(request: Request, call_next):
         resp.headers["X-Content-Type-Options"] = "nosniff"
         resp.headers["X-Frame-Options"] = "DENY"
         resp.headers["Content-Security-Policy"] = _CSP
+    elif p in _PUBLIC_PAGES:
+        resp.headers["Cache-Control"] = "no-cache"
+        resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        resp.headers["X-Content-Type-Options"] = "nosniff"
+        resp.headers["X-Frame-Options"] = "DENY"
+        resp.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'none'; style-src 'self'; img-src 'self'; font-src 'self'; "
+            "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+        )
     elif p.startswith("/static/"):
         resp.headers["X-Content-Type-Options"] = "nosniff"
         resp.headers["Cache-Control"] = "no-cache"
@@ -242,7 +302,7 @@ class RegisterIn(BaseModel):
     password: str
     name: str = ""
     username: str | None = None  # isteğe bağlı; telefon yerine girişte kullanılır
-    email: str | None = None  # isteğe bağlı; henüz doğrulanmıyor
+    email: str | None = None  # isteğe bağlı; 1.20.0'dan beri Giriş ve Güvenlik'ten kodla doğrulanır
     role: str = "courier"  # courier | employer | sponsor (eski istemciler göndermez → kurye)
 
 
@@ -302,6 +362,8 @@ class JobIn(BaseModel):
     area: str = Field(default="", max_length=160)
     fee: float | None = Field(default=None, ge=0, le=1_000_000)
     packages: list[PkgIn] = Field(default_factory=list)
+    # 1.17.0: "İlanı öne çıkar" (1 gün, Rota coin sunucuda düşer; bakiye yetmezse ilan açılmaz)
+    promote: bool = False
 
     model_config = {"populate_by_name": True}
 
@@ -350,6 +412,9 @@ def user_out(u: User) -> dict:
         "workArea": work_area_of(u),
         # 1.14.1: işletme logosu sürümü ('' = yok; yönetim silince boşalır, uygulama bunu görüp telefondaki logoyu da kaldırır)
         "logo": logo_version(u),
+        # 1.20.0: doğrulama (doğrulanmış e-postaya "şifremi unuttum" kodu gider; girişte de kullanılır)
+        "emailVerified": bool(u.email and u.email_verified_at),
+        "phoneVerified": bool(u.phone_verified_at),
     }
 
 
@@ -463,6 +528,8 @@ def job_out(j: Job, db: Session, include_packages=False) -> dict:
         "applicant": person(applicant),
         "courier": person(courier),
         "packages": [pkg_out(p, base) for p in pkgs] if include_packages else None,
+        # 1.17.0: öne çıkan ilan (Rota coin) — bu zamana kadar listenin başında (ms; süresi dolduysa null)
+        "promotedUntil": ms_of(j.promoted_until) if j.promoted_until and ms_of(j.promoted_until) > ms_of(now()) else None,
     }
 
 
@@ -486,6 +553,60 @@ def health():
 @app.get("/yonetim", include_in_schema=False)
 def admin_page():
     return FileResponse(os.path.join(STATIC_DIR, "yonetim.html"), media_type="text/html; charset=utf-8")
+
+
+@app.get("/hesap-sil", include_in_schema=False)
+def delete_page():
+    """1.20.0: uygulamayı kurmadan hesap silme sayfası (Google Play "hesap silme bağlantısı" şartı). Giriş + onay; veri sunucuda silinir."""
+    return FileResponse(os.path.join(STATIC_DIR, "hesap-sil.html"), media_type="text/html; charset=utf-8")
+
+
+# 1.20.1: gizlilik politikası ve kullanım koşulları — uygulamanın src/legal/texts.ts metninden üretilir
+# (uygulama deposunda: npx tsx scripts/yasal-sayfalar.ts <bu depo>/app/static). Mağaza formlarındaki adresler bunlar.
+@app.api_route("/gizlilik", methods=["GET", "HEAD"], include_in_schema=False)
+def privacy_page():
+    return FileResponse(os.path.join(STATIC_DIR, "gizlilik.html"), media_type="text/html; charset=utf-8")
+
+
+@app.api_route("/kosullar", methods=["GET", "HEAD"], include_in_schema=False)
+def terms_page():
+    return FileResponse(os.path.join(STATIC_DIR, "kosullar.html"), media_type="text/html; charset=utf-8")
+
+
+_EMAIL_RE = re.compile(r"^[^\s@<>\"'()]+@[^\s@<>\"'()]+\.[^\s@<>\"'()]+$")
+
+
+def support_email() -> str | None:
+    """Destek e-postası Render ortamındaki DESTEK_EPOSTA'dan okunur (gizli değil, herkese görünür; koda / depoya yazılmaz).
+    Tanımlı değilse ya da e-posta biçiminde değilse None."""
+    e = (os.getenv("DESTEK_EPOSTA") or "").strip()
+    return e if e and len(e) <= 120 and _EMAIL_RE.match(e) else None
+
+
+_DESTEK_SOON = {
+    "tr": '<p class="soon">Destek e-postası yakında burada olacak. Şimdilik uygulamada <b>Hesabım › Yardım ve Destek</b> › “Bize yaz”ı kullan.</p>',
+    "en": '<p class="soon">The support e-mail will appear here soon. For now, use <b>Hesabım (Account) › Yardım ve Destek (Help &amp; Support)</b> › “Bize yaz” (Write to us) in the app.</p>',
+}
+
+
+@app.api_route("/destek", methods=["GET", "HEAD"], include_in_schema=False)
+def support_page():
+    """Mağazaların istediği destek adresi. E-posta satırı DESTEK_EPOSTA'dan eklenir (HTML'e kaçışlı yazılır)."""
+    with open(os.path.join(STATIC_DIR, "destek.html"), encoding="utf-8") as f:
+        page = f.read()
+    e = support_email()
+    if e:
+        safe = html_escape(e, quote=True)
+        tr = en = f'<a class="mail" href="mailto:{safe}">{safe}</a>'
+    else:
+        tr, en = _DESTEK_SOON["tr"], _DESTEK_SOON["en"]
+    return HTMLResponse(page.replace("<!--EPOSTA_TR-->", tr).replace("<!--EPOSTA_EN-->", en))
+
+
+@app.get("/v1/support")
+def support_info():
+    """Uygulamanın Yardım ekranı destek e-postasını buradan okur (0.23.1); adres değişince uygulama yeniden derlenmez."""
+    return {"email": support_email()}
 
 
 @app.post("/v1/auth/register")
@@ -533,24 +654,30 @@ def register(body: RegisterIn, db: Session = Depends(get_db)):
             if attempt == 3:
                 raise HTTPException(503, "Kayıt şu an yapılamadı, tekrar deneyin")
     db.refresh(u)
+    # 1.20.0: aynı numarayla silinmiş KARA LİSTEDEKİ hesap varsa yeni hesap kara listeyi devralır (yalnız yönetim görür)
+    if sec.inherit_blacklist(db, u):
+        db.commit()
     return {"token": user_token(u), "user": user_out(u)}
 
 
 @app.post("/v1/auth/login")
-def login(body: LoginIn, db: Session = Depends(get_db)):
+def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
     ident = (body.login or body.phone or body.username or "").strip()
     if not ident:
         raise HTTPException(400, "Telefon veya kullanıcı adını yaz")
-    if is_phone_like(ident):
-        u = db.query(User).filter(User.phone == norm_phone(ident)).first()
-    else:
-        u = db.query(User).filter(User.username == ident.lower()).first()
+    # 1.20.0: telefon, kullanıcı adı ya da DOĞRULANMIŞ e-posta; yanlış şifre sayacı + kilit (app/security.py)
+    kind, norm = sec.ident_of(ident)
+    u = sec.find_user(db, kind, norm)
+    keys = sec.login_keys(kind, norm, u)
+    sec.ensure_login_open(db, keys, request)  # kilitliyken doğru şifre de denenmez
     # Hesap bulunamasa da şifre denetimi yapılır: yanıt süresi "bu hesap var mı" sorusunu ele vermesin
     ok = check_pw(body.password or "", u.password_hash if u else DUMMY_HASH)
     if not u or not ok:
+        sec.note_login_fail(db, keys, request, u)
         raise HTTPException(401, "Telefon / kullanıcı adı veya şifre yanlış")
     if u.banned:  # şifreyi bilen kişiye söylenir (bilmeyene hesabın varlığı / durumu açıklanmaz)
         raise AccountBlocked(u.banned_reason or "")
+    sec.note_login_ok(db, keys)
     u.last_login_at = now()
     events.log(db, "user.login", u.id)
     db.commit()
@@ -582,6 +709,7 @@ def change_password(body: PasswordIn, user: User = Depends(current_user), db: Se
     user.password_hash = hash_pw(new)
     user.must_change_password = False
     user.token_version = (user.token_version or 0) + 1
+    drop_user_pushes(db, user.id)  # 1.20.0: oturumu kapanan cihazlara bildirim gitmesin (bu cihaz açılınca yeniden kaydolur)
     events.log(db, "user.password", user.id)
     db.commit()
     db.refresh(user)
@@ -622,7 +750,10 @@ def update_profile(body: ProfileIn, user: User = Depends(current_user), db: Sess
             raise HTTPException(400, "Bu kullanıcı adı alınmış, başka bir ad seç")
         user.username = username or None
     if body.email is not None:
-        user.email = norm_email(body.email) or None
+        em = norm_email(body.email) or None
+        if em != user.email:
+            user.email_verified_at = None  # 1.20.0: yeni adres kodla yeniden doğrulanır
+        user.email = em
     events.log(db, "user.profile", user.id, fields=[k for k in ("name", "username", "email") if getattr(body, k) is not None])
     try:
         db.commit()
@@ -793,6 +924,10 @@ def create_job(body: JobIn, user: User = Depends(current_user), db: Session = De
     if count < 1:
         raise HTTPException(400, "İlanda en az bir adres olmalı")
     rows = []
+    job_id = uid()
+    title = (body.title or "Teslimat işi").strip()
+    if body.promote:  # coin önce düşer (hesabın ilk yazımı); yetmezse 400 ve ilan açılmaz
+        coin_charge(db, user.id, PROMO_COIN_PER_DAY, "promote", f"Öne çıkan ilan · {title[:60]} · 1 gün", ref=job_id)
     # Yeni akışta adresler (alıcı adı, telefon, adres) sunucuya YAZILMAZ; işletmenin telefonunda kalır.
     for p in body.packages if ESKI_AKIS else []:
         phone = norm_phone(p.phone)
@@ -815,9 +950,9 @@ def create_job(body: JobIn, user: User = Depends(current_user), db: Session = De
             )
         )
     job = Job(
-        id=uid(),
+        id=job_id,
         employer_id=user.id,
-        title=(body.title or "Teslimat işi").strip(),
+        title=title,
         note=body.note or "",
         employer_lat=body.lat,
         employer_lon=body.lon,
@@ -826,12 +961,17 @@ def create_job(body: JobIn, user: User = Depends(current_user), db: Session = De
         area=(body.area or "").strip(),
         fee=body.fee,
         packages=rows,
+        promoted_until=now() + timedelta(days=1) if body.promote else None,
     )
     user.active_role = "employer"
     user.lat = body.lat
     user.lon = body.lon
     db.add(job)
     events.log(db, "job.create", user.id, job.id, n=count)
+    if body.promote:
+        events.log(db, "job.promote", user.id, job.id, days=1)
+    # 1.19.0: aynı çalışma bölgesindeki (il + ilçe; seçtiyse mahalle) kuryelere "📢 Çalışma bölgende yeni ilan var" (10 dk'da bir)
+    push_queue_job_area(db, user, job.area or "")
     db.commit()
     db.refresh(job)
     return job_out(job, db, include_packages=ESKI_AKIS)
@@ -863,7 +1003,7 @@ def open_jobs(user: User = Depends(current_user), db: Session = Depends(get_db))
         .filter(User.banned.is_not(True))  # askıya alınmış işverenin ilanı listelenmez
         # Bir kuryeye bağlanmış ilan (açık görevi var) başka kuryelere sunulmaz: bir ilan aynı anda tek kuryeye verilir
         .filter(~db.query(Task.id).filter(Task.job_id == Job.id, Task.status.in_(TASK_OPEN)).exists())
-        .order_by(Job.created_at.desc())
+        .order_by(case((Job.promoted_until > now(), 0), else_=1), Job.created_at.desc())  # öne çıkan ilan başta
         .limit(80)
         .all()
     )

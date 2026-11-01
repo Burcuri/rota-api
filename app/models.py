@@ -57,6 +57,15 @@ class User(Base):
     logo = Column(Text)
     logo_type = Column(String(16))
     logo_at = Column(DateTime(timezone=True))
+    # 1.20.0: hesap güvenliği (kullanıcı isteği 29 Ekim 2026). Doğrulanmış e-posta "şifremi unuttum" kodunun gideceği yerdir ve girişte
+    # kullanılabilir (doğrulanmamış e-posta hiçbir işte kullanılmaz). E-posta / telefon değişince doğrulama düşer.
+    email_verified_at = Column(DateTime(timezone=True))
+    phone_verified_at = Column(DateTime(timezone=True))
+    # Hesap silindi (kullanıcı kendisi sildi): satır yabancı anahtarlar bozulmasın diye kalır ama kişisel bilgi silinir (ad, telefon,
+    # kullanıcı adı, e-posta, konum, logo…); oturum açılamaz. `phone_hash` yalnız KARA LİSTEDEKİ hesap silinirse yazılır: aynı numarayla
+    # yeniden açılan hesap kara listeyi devralsın diye (geri çevrilemez özet; numaranın kendisi tutulmaz).
+    deleted_at = Column(DateTime(timezone=True))
+    phone_hash = Column(String(64), index=True)
 
     jobs_posted = relationship("Job", back_populates="employer", foreign_keys="Job.employer_id")
 
@@ -80,6 +89,8 @@ class Job(Base):
     created_at = Column(DateTime(timezone=True), default=now)
     accepted_at = Column(DateTime(timezone=True))
     departed_at = Column(DateTime(timezone=True))
+    # 1.17.0: Rota coin ile ÖNE ÇIKAN ilan bu zamana kadar listenin başında ("ÖNE ÇIKAN İLAN" etiketiyle). Coin sunucuda harcanır.
+    promoted_until = Column(DateTime(timezone=True))
 
     employer = relationship("User", foreign_keys=[employer_id], back_populates="jobs_posted")
     packages = relationship("JobPackage", back_populates="job", cascade="all, delete-orphan")
@@ -259,8 +270,28 @@ class Handoff(Base):
     # Kurye teslimi bitirdi (uygulamadan sildi): telefon / e-posta silinir, kayıt kurye için görünmez olur; alıcı değerlendirme
     # yazabilsin diye süresi dolana kadar (en çok HANDOFF_REVIEW_HOURS) kalır
     closed_at = Column(DateTime(timezone=True))
+    # 1.18.0 — alıcıya süreç takibi (Hazırlanıyor → Yolda → Teslim edildi):
+    # Kaydı işveren açtıysa (adres doğrulama / "📦 Yola çıktı") işverenin kimliği. Listeyi alan kurye (açık görevle) kayda BAĞLANIR:
+    # courier_id kuryeye geçer, işveren durumu görmeye devam eder. Kuryenin kendi açtığı kayıtta boş (ya da listenin işvereni).
+    employer_id = Column(String(32), ForeignKey("users.id"), nullable=True, index=True)
+    departed_at = Column(DateTime(timezone=True))  # paket yola çıktı (işveren "📦 Yola çıktı" ya da kurye hedefe ulaştı)
+    delivered_at = Column(DateTime(timezone=True))  # kurye "Teslim edildi" dedi (alıcı kutuyu işaretlemese de çubuk sona varır)
 
     __table_args__ = (Index("ix_handoffs_courier_ref", "courier_id", "ref"),)
+
+
+class HandoffPush(Base):
+    """Alıcının tarayıcı bildirimi aboneliği (1.18.0). Alıcı sayfada "🔔 Bildirim al" deyip izin verirse yazılır; YALNIZ o teslim
+    içindir. Teslim edilince / kurye teslimi bitirince / kayıt silinince (en geç 48 saat) silinir. Ad, telefon, hesap YOK."""
+
+    __tablename__ = "handoff_push"
+    id = Column(String(32), primary_key=True, default=uid)
+    handoff_id = Column(String(32), ForeignKey("handoffs.id", ondelete="CASCADE"), nullable=False, index=True)
+    endpoint = Column(String(1024), nullable=False)  # tarayıcının bildirim servisindeki adresi
+    p256dh = Column(String(128), nullable=False)
+    auth = Column(String(48), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=now)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)  # teslim kaydıyla aynı (ya da daha erken)
 
 
 class ClientError(Base):
@@ -473,3 +504,269 @@ class Nudge(Base):
     to_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
     kind = Column(String(8), nullable=False)
     created_at = Column(DateTime(timezone=True), default=now, index=True)
+
+
+# ------------------------------------------------------------------ 1.15.0: PUAN VE ÖDÜL (kullanıcı kararları 26–27 Ekim 2026)
+class PointEntry(Base):
+    """PUAN DEFTERİ: puan yalnız burada tutulur (telefon yalnız gösterir). Satırlar yalnız eklenir; bakiye = delta toplamı.
+    kind: delivery (+10, doğrulanmış teslim) | hold (−bedel, ödül alındı) | refund (+bedel, ödül iade) | expire (−, 12 ay kullanılmayan)
+    | admin (yönetim düzeltmesi). Kişi verisi yok: adres, alıcı, konum burada tutulmaz."""
+
+    __tablename__ = "point_entries"
+    id = Column(String(32), primary_key=True, default=uid)
+    user_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    delta = Column(Integer, nullable=False)
+    kind = Column(String(16), nullable=False, index=True)
+    ref = Column(String(40), nullable=False, default="")  # teslim kaydı / ödül talebi kimliği
+    note = Column(String(120), nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), default=now, index=True)
+
+
+class DeliveryProof(Base):
+    """TESLİM DOĞRULAMA KAYDI (bir durak için bir satır). Puan yalnız doğrulanmış teslime: alıcı "Paketimi aldım" dedi (recipient) ya da
+    kurye kapıda GPS ile ≤50 m (gps). Adres YOK: yalnız telefonda üretilmiş geri çevrilemez özet (addr_key; "aynı adrese aynı gün tekrar
+    puan yok" kuralı için) ve ~110 m'lik yaklaşık konum hücresi (cell; yönetimin şüpheli toplanma denetimi için). DELIVERY_PROOF_KEEP_DAYS
+    (30) gün sonra silinir; kalıcı olan yalnız puan defterindeki +10 satırıdır."""
+
+    __tablename__ = "delivery_proofs"
+    id = Column(String(32), primary_key=True, default=uid)
+    courier_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    ref = Column(String(64), nullable=False)  # telefondaki durak kimliği
+    addr_key = Column(String(40), nullable=False, default="")
+    day = Column(String(10), nullable=False, index=True)  # Türkiye günü (YYYY-AA-GG)
+    method = Column(String(10), nullable=False, default="none")  # recipient | gps | none
+    points = Column(Integer, nullable=False, default=0)
+    reason = Column(String(12), nullable=False, default="")  # '' | unverified | cap | same_addr
+    dist_m = Column(Float)
+    acc_m = Column(Float)
+    cell = Column(String(16), nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), default=now, index=True)
+    awarded_at = Column(DateTime(timezone=True))
+
+    __table_args__ = (UniqueConstraint("courier_id", "ref", name="uq_delivery_proof_ref"),)
+
+
+class Reward(Base):
+    """Sponsorun / işverenin kuryelere PUANLA verdiği ödül. Bedel basamaklıdır (1000 / 2000 / 3000 / 5000 puan); 1 puan = 0,10 TL referans
+    değer: ürünün beyan edilen değeri basamağın TL karşılığının en az %80'i olmalı (kurye için adil). Ürün ve kargo parasını ödülü koyan öder;
+    Rota para tutmaz, puan nakde çevrilmez."""
+
+    __tablename__ = "rewards"
+    id = Column(String(32), primary_key=True, default=uid)
+    owner_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    owner_role = Column(String(10), nullable=False, default="sponsor")  # sponsor | employer
+    brand = Column(String(60), nullable=False, default="")  # kuryelerin gördüğü işletme / firma adı
+    name = Column(String(60), nullable=False)
+    note = Column(String(200), nullable=False, default="")
+    tier = Column(Integer, nullable=False)  # puan bedeli
+    value_tl = Column(Integer, nullable=False)  # ürünün beyan edilen değeri (TL)
+    qty_total = Column(Integer, nullable=False, default=1)
+    qty_left = Column(Integer, nullable=False, default=1)
+    ends_at = Column(DateTime(timezone=True), index=True)
+    status = Column(String(10), nullable=False, default="active", index=True)  # active | removed
+    created_at = Column(DateTime(timezone=True), default=now, index=True)
+
+
+class RewardClaim(Base):
+    """Ödül talebi. Kurye "Al" der → puan BLOKE (defterde −bedel), ödülü koyana bildirim → 7 gün içinde kargolar (firma + takip no) →
+    kuryeye "Ürünü aldın mı?" → evet: kapanır (+ 1–5 yıldız memnuniyet) · hayır: yönetime düşer. Süreler: 7 günde kargolanmazsa puan iade;
+    kargodan sonra 14 günde cevap yoksa "teslim alındı" sayılır. Kargo adresi YALNIZ ödülü koyan görür ve talep kapanınca silinir
+    (en geç 60 gün)."""
+
+    __tablename__ = "reward_claims"
+    id = Column(String(32), primary_key=True, default=uid)
+    code = Column(String(12), unique=True, nullable=False, index=True)
+    reward_id = Column(String(32), ForeignKey("rewards.id"), nullable=False, index=True)
+    owner_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    courier_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    reward_name = Column(String(60), nullable=False, default="")
+    brand = Column(String(60), nullable=False, default="")
+    cost = Column(Integer, nullable=False)
+    # pending (kargo bekliyor) | shipped | received | disputed | refunded | cancelled
+    status = Column(String(10), nullable=False, default="pending", index=True)
+    ship_name = Column(String(80), nullable=False, default="")
+    ship_phone = Column(String(16), nullable=False, default="")
+    ship_address = Column(String(300), nullable=False, default="")
+    carrier = Column(String(40), nullable=False, default="")
+    tracking = Column(String(40), nullable=False, default="")
+    stars = Column(Integer)
+    courier_note = Column(String(200), nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), default=now, index=True)
+    ship_due_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    shipped_at = Column(DateTime(timezone=True))
+    on_time = Column(Boolean)  # 7 gün içinde kargolandı mı (sponsor karnesi)
+    answer_due_at = Column(DateTime(timezone=True), index=True)
+    received_at = Column(DateTime(timezone=True))
+    closed_at = Column(DateTime(timezone=True), index=True)
+    # '' | courier_received | auto_received | late_ship | owner_cancel | courier_cancel | admin_refund | admin_received
+    close_reason = Column(String(16), nullable=False, default="")
+
+
+class Notice(Base):
+    """Sistem bildirimi (uygulamada 🔔 Uyarılar ve duyurular): ör. "KRY-… kuryesi ürününüzü almaya hak kazandı". Uygulama alınca siler
+    (ack); alınmayan NOTICE_KEEP_DAYS (30) gün sonra silinir."""
+
+    __tablename__ = "notices"
+    id = Column(String(32), primary_key=True, default=uid)
+    user_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    kind = Column(String(24), nullable=False, default="")
+    text = Column(String(300), nullable=False, default="")
+    ref = Column(String(40), nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), default=now, index=True)
+
+
+class UserMark(Base):
+    """Yönetimin bir hesaba koyduğu işaretler (1.16.0; kullanıcı kararı 27 Ekim 2026). Kayıt yalnız işaret konunca açılır.
+    - KARA LİSTE (`blacklisted` + `note`): not zorunlu, YALNIZ yönetim görür. Kurye ödül alamaz; sponsor / işveren ödül koyamaz ve ödülleri
+      katalogda görünmez (kargo bekleyen talepleri yine gönderir). Hesap askıya alma (men) bundan ayrıdır.
+    - ÖNE ÇIKARMA (`featured_until`): ödülleri katalogda en üstte "⭐ Öne çıkan".
+    - AF (`pardon_until`): düzensiz sayılıp katalogdan inen ödül koyanın ödülleri bu tarihe dek yine görünür.
+    Not kara listeden çıkınca da durur (geçmiş); her değişiklik işlem günlüğüne (admin_audit) yazılır."""
+
+    __tablename__ = "user_marks"
+    user_id = Column(String(32), ForeignKey("users.id"), primary_key=True)
+    blacklisted = Column(Boolean, nullable=False, default=False, index=True)
+    note = Column(String(500), nullable=False, default="")
+    listed_at = Column(DateTime(timezone=True))
+    listed_by = Column(String(32), nullable=False, default="")
+    note_at = Column(DateTime(timezone=True))
+    note_by = Column(String(32), nullable=False, default="")
+    featured_until = Column(DateTime(timezone=True), index=True)
+    featured_by = Column(String(32), nullable=False, default="")
+    pardon_until = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), default=now)
+    updated_at = Column(DateTime(timezone=True), default=now)
+
+
+# ---------------------------------------------------------------------------------------------------------------- 1.17.0: hesap verisi sunucuda
+# Kullanıcı kararı (28 Ekim 2026): "Sunucuyu hesap başına tek kaynak yapalım; çevrimiçi olunca telefonda ya da web ikizinde güncellensin.
+# Reklam deposu kesinlikle online olmalı. IBAN yok. Rehber telefonda kalır; isteyen 24 saatlik yedek bırakır." Kurallar: app/account.py.
+class AccountState(Base):
+    """Hesabın EŞİTLEME SAATİ: hesaptaki her değişiklikte 1 artar. Cihaz `GET /v1/account?since=<saat>` ile yalnız değişenleri alır.
+    Aynı hesabın yazımlarını (coin harcaması dahil) sıraya dizer: her yazım önce bu satırı günceller (satır kilidi)."""
+
+    __tablename__ = "account_state"
+    user_id = Column(String(32), ForeignKey("users.id"), primary_key=True)
+    clock = Column(BigInteger, nullable=False, default=0)
+    coins_rev = Column(BigInteger, nullable=False, default=0)  # coin defteri en son hangi saatte değişti
+    ads_rev = Column(BigInteger, nullable=False, default=0)  # reklam kayıtları en son hangi saatte değişti
+    updated_at = Column(DateTime(timezone=True), default=now)
+
+
+class AccountDoc(Base):
+    """Hesabın bir BÖLÜMÜ (bildirim / gizlilik tercihleri, sürüş ayarı, işletme / sponsor profili, şablonlar, ürün listesi), JSON.
+    `rev`: yazıldığı andaki eşitleme saati. `edited_ms`: kullanıcının düzenlediği an (cihaz saati) — çakışmada SON DÜZENLENEN geçerli olur."""
+
+    __tablename__ = "account_docs"
+    user_id = Column(String(32), ForeignKey("users.id"), primary_key=True)
+    section = Column(String(24), primary_key=True)
+    data = Column(Text, nullable=False, default="{}")
+    rev = Column(BigInteger, nullable=False, default=0, index=True)
+    edited_ms = Column(BigInteger, nullable=False, default=0)
+    updated_at = Column(DateTime(timezone=True), default=now)
+
+
+class CoinEntry(Base):
+    """Rota coin defteri: bakiye = hareketlerin toplamı. Coin nakde çevrilmez, aktarılmaz, süresi dolmaz (kullanım koşulları › 4. COIN).
+    kind: test (mağaza bağlanana kadar test satın alma) | store (mağaza satın alması, ileride) | ad (harita reklamı) | promote (öne çıkan ilan)
+    | admin (yönetim düzeltmesi)."""
+
+    __tablename__ = "coin_entries"
+    id = Column(String(32), primary_key=True, default=uid)
+    user_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    delta = Column(Integer, nullable=False)
+    kind = Column(String(16), nullable=False)
+    label = Column(String(160), nullable=False, default="")
+    ref = Column(String(40), nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), default=now, index=True)
+
+
+class AdBooking(Base):
+    """REKLAM DEPOSU: haritada bir noktada N gün reklam (sponsor ve işveren; Rota coin ile). Paketle alınan reklamın her noktası ayrı satırdır
+    (aynı `group_id`). Kaldırılan reklam silinmez, `removed_at` yazılır (coin iade edilmez); kuryelere yalnız süresi dolmamış, kaldırılmamış
+    ve sahibi askıda olmayan reklamlar gösterilir."""
+
+    __tablename__ = "ad_bookings"
+    id = Column(String(32), primary_key=True, default=uid)
+    owner_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    label = Column(String(60), nullable=False, default="")
+    lat = Column(Float, nullable=False)
+    lon = Column(Float, nullable=False)
+    days = Column(Integer, nullable=False)
+    cost = Column(Integer, nullable=False)
+    package_id = Column(String(16), nullable=False, default="")
+    group_id = Column(String(32), nullable=False, default="")
+    starts_at = Column(DateTime(timezone=True), default=now)
+    ends_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    removed_at = Column(DateTime(timezone=True))
+    removed_by = Column(String(16), nullable=False, default="")  # owner | admin
+    created_at = Column(DateTime(timezone=True), default=now)
+
+
+class GuideBackup(Base):
+    """REHBER YEDEĞİ (isteğe bağlı): rehberin asıl yeri telefondur. Telefon değiştiren kullanıcı rehberini sunucuya bırakır, yeni telefonda
+    girişte geri alır. Hesap başına tek yedek; `expires_at` (24 saat) dolunca kendiliğinden silinir. Yalnız hesabın sahibi okur."""
+
+    __tablename__ = "guide_backups"
+    user_id = Column(String(32), ForeignKey("users.id"), primary_key=True)
+    data = Column(Text, nullable=False, default="[]")
+    n = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), default=now)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+# ---------------------------------------------------------------------------------------------------------------- 1.19.0: telefona bildirim
+class UserPush(Base):
+    """Bildirim gelecek cihaz (1.19.0; kullanıcı isteği 29 Ekim 2026). `kind`: expo (telefon uygulaması: ExponentPushToken[…]) | web (web
+    ikizi: tarayıcının bildirim adresi + şifreleme anahtarları). Mesaj cihazına (`device_id` = relay cihaz kimliği) bağlıdır: çıkışta silinir.
+    Bildirim metni kişisel bilgi içermez; burada yalnız cihazın bildirim adresi durur. Servis "cihaz yok" derse silinir."""
+
+    __tablename__ = "user_push"
+    id = Column(String(32), primary_key=True, default=uid)
+    user_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    kind = Column(String(8), nullable=False, default="expo")
+    token = Column(String(1024), nullable=False, unique=True)
+    p256dh = Column(String(128), nullable=False, default="")
+    auth = Column(String(48), nullable=False, default="")
+    platform = Column(String(16), nullable=False, default="")
+    device_id = Column(String(64), nullable=False, default="", index=True)
+    created_at = Column(DateTime(timezone=True), default=now)
+    seen_at = Column(DateTime(timezone=True), default=now)
+
+
+# ---------------------------------------------------------------------------------------------------------------- 1.20.0: hesap güvenliği
+class AuthCode(Base):
+    """Tek kullanımlık 6 haneli DOĞRULAMA KODU (1.20.0): şifremi unuttum (reset), e-posta doğrulama (email), telefon doğrulama (phone),
+    telefon değiştirme (phone_change). Kodun kendisi saklanmaz: yalnız HMAC özeti (`code_hash`). SMS / e-posta servisi bağlı değilken
+    (deneme modu) ya da gönderim başarısızsa kod kişiye ULAŞMAZ: o zaman kod (`code_plain`) yönetim panelinde görünür — yönetim kişinin
+    kimliğini doğrulayıp kodu söyler (her bakış işlem günlüğüne yazılır). Kullanılınca / süresi dolunca `code_plain` silinir; satır 2 gün sonra."""
+
+    __tablename__ = "auth_codes"
+    id = Column(String(32), primary_key=True, default=uid)
+    user_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    purpose = Column(String(16), nullable=False, index=True)  # reset | email | phone | phone_change
+    channel = Column(String(8), nullable=False, default="sms")  # email | sms
+    target = Column(String(254), nullable=False, default="")  # kodun gittiği e-posta / telefon (telefon değişiminde YENİ numara)
+    code_hash = Column(String(64), nullable=False)
+    code_plain = Column(String(8))  # yalnız kişiye ulaşmamış kodda (yönetim panelinde gösterilir)
+    delivered = Column(Boolean, nullable=False, default=False)
+    provider = Column(Boolean, nullable=False, default=False)  # gönderim servisi bağlı mıydı (False = deneme modu)
+    attempts = Column(Integer, nullable=False, default=0)
+    ip = Column(String(64), nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), default=now, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    used_at = Column(DateTime(timezone=True))
+
+
+class AuthThrottle(Base):
+    """GİRİŞ KİLİDİ (1.20.0): yanlış şifre sayacı. Anahtar: girişte yazılan bilginin özeti (`id:…`; kayıtlı olmayan bilgi için de, "bu
+    numara kayıtlı mı" anlaşılmasın diye) ve hesabın kendisi (`u:<hesap>`; telefon / kullanıcı adı / e-posta değiştirilerek sınır
+    aşılmasın). 5 yanlış → 15 dk, 10 → 1 saat, 15 → 6 saat, 20+ → 24 saat kilit; doğru girişte sıfırlanır. Yönetim "Kilidi aç" der."""
+
+    __tablename__ = "auth_throttle"
+    key = Column(String(80), primary_key=True)
+    user_id = Column(String(32), index=True)
+    fails = Column(Integer, nullable=False, default=0)
+    first_at = Column(DateTime(timezone=True), default=now)
+    last_at = Column(DateTime(timezone=True), default=now, index=True)
+    locked_until = Column(DateTime(timezone=True), index=True)

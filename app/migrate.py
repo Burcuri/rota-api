@@ -50,6 +50,17 @@ ADD_COLUMNS = [
     ("users", "logo", "TEXT"),
     ("users", "logo_type", "VARCHAR(16)"),
     ("users", "logo_at", "TIMESTAMP WITH TIME ZONE"),
+    # 1.17.0: Rota coin ile öne çıkan ilan (coin sunucuda)
+    ("jobs", "promoted_until", "TIMESTAMP WITH TIME ZONE"),
+    # 1.18.0: alıcıya süreç takibi (Hazırlanıyor → Yolda → Teslim edildi), işverenin "📦 Yola çıktı" düğmesi
+    ("handoffs", "employer_id", "VARCHAR(32)"),
+    ("handoffs", "departed_at", "TIMESTAMP WITH TIME ZONE"),
+    ("handoffs", "delivered_at", "TIMESTAMP WITH TIME ZONE"),
+    # 1.20.0: hesap güvenliği (e-posta / telefon doğrulama, hesap silme; kara listedeki silinen hesabın numara özeti)
+    ("users", "email_verified_at", "TIMESTAMP WITH TIME ZONE"),
+    ("users", "phone_verified_at", "TIMESTAMP WITH TIME ZONE"),
+    ("users", "deleted_at", "TIMESTAMP WITH TIME ZONE"),
+    ("users", "phone_hash", "VARCHAR(64)"),
 ]
 
 # create_all'un yeni kurulumda açtığı dizin adlarıyla aynı adlar (ix_<tablo>_<sütun>)
@@ -57,6 +68,8 @@ INDEXES = [
     "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_username ON users (username)",
     "CREATE INDEX IF NOT EXISTS ix_users_email ON users (email)",
     "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_public_no ON users (public_no)",
+    "CREATE INDEX IF NOT EXISTS ix_handoffs_employer_id ON handoffs (employer_id)",  # 1.18.0
+    "CREATE INDEX IF NOT EXISTS ix_users_phone_hash ON users (phone_hash)",  # 1.20.0
 ]
 
 
@@ -80,8 +93,12 @@ def ensure_schema() -> list[str]:
                 continue
             raise
         done.append(f"{table}.{col} eklendi")
+    now_insp = inspect(engine)  # güncel bakış (yukarıda sütun eklenmiş olabilir)
     with engine.begin() as conn:
         for ddl in INDEXES:
+            tbl = ddl.split(" ON ", 1)[1].split(" ", 1)[0] if " ON " in ddl else ""
+            if tbl and not now_insp.has_table(tbl):  # tablo henüz yoksa (create_all açınca dizini de açar)
+                continue
             conn.execute(text(ddl))
     n = backfill_public_no()
     if n:

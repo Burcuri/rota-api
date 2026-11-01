@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 
 from . import events
 from .auth import current_user
+from .pushes import queue as push_queue
 from .db import SessionLocal, get_db
 from .limits import Window
 from .models import Follow, Job, Task, User, now, uid
@@ -254,6 +255,7 @@ def make_router(keep_hours: float = 48, max_hours: float = 24) -> APIRouter:
         )
         db.add(t)
         events.log(db, "task.share", user.id, t.id, to=c.id, job=bool(job))
+        push_queue(db, c.id, "task_shared", thread=user.id)  # 1.19.0: kuryeye "📋 Size yeni bir adres listesi paylaşıldı"
         try:
             db.commit()
         except IntegrityError:  # aynı anda aynı ilan / kurye için başka paylaşım açıldı
@@ -279,6 +281,7 @@ def make_router(keep_hours: float = 48, max_hours: float = 24) -> APIRouter:
         t.status = "matched"
         t.matched_at = now()
         events.log(db, "task.match", user.id, t.id)
+        push_queue(db, t.employer_id, "task_accepted", thread=user.id)  # 1.19.0: işverene "✅ Kurye adres listesini kabul etti"
         db.commit()
         return view(db, t, user)
 
@@ -288,6 +291,8 @@ def make_router(keep_hours: float = 48, max_hours: float = 24) -> APIRouter:
         if t.courier_id != user.id:
             raise HTTPException(403, "Görevi yalnız kurye reddeder")
         if t.status in OPEN:
+            if t.status == "shared":
+                push_queue(db, t.employer_id, "task_declined", thread=user.id)  # 1.19.0
             end_task(db, t, "declined" if t.status == "shared" else "stopped_courier", user.id)
             db.commit()
         return view(db, t, user)

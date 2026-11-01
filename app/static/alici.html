@@ -6,14 +6,39 @@
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="origin">
 <title>Paket teslimi</title>
+<meta name="theme-color" content="#0D1B2A">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Kargom">
+<link rel="apple-touch-icon" href="/static/alici-180.png">
+<link rel="icon" href="/static/alici-192.png">
+<!--MANIFEST-->
 <link rel="stylesheet" href="/static/leaflet/leaflet.css">
-<link rel="stylesheet" href="/static/alici.css?v=4">
+<link rel="stylesheet" href="/static/alici.css?v=5">
 </head>
 <body>
 <header>
   <div class="brand">ROTA <span>Paket teslimi</span></div>
   <div id="addr" class="addr"></div>
 </header>
+
+<!-- 1.18.0: süreç çubuğu (Migros'taki gibi üç parça) + tarayıcı bildirimi -->
+<section id="track" class="track" aria-labelledby="trackTitle" hidden>
+  <div class="trackHead">
+    <h1 id="trackTitle" class="trackTitle">Kargonuz yolda</h1>
+  </div>
+  <ol class="steps" aria-label="Teslimat süreci">
+    <li class="step" id="st-preparing"><span class="seg" aria-hidden="true"></span><span class="lbl">Hazırlanıyor</span><span class="t" id="t-preparing"></span></li>
+    <li class="step" id="st-onway"><span class="seg" aria-hidden="true"></span><span class="lbl">Yolda</span><span class="t" id="t-onway"></span></li>
+    <li class="step" id="st-delivered"><span class="seg" aria-hidden="true"></span><span class="lbl">Teslim edildi</span><span class="t" id="t-delivered"></span></li>
+  </ol>
+  <div id="pushBox" class="pushBox" hidden>
+    <button id="pushOn" class="btn bell" type="button" hidden>🔔 Yola çıkınca bildirim al</button>
+    <p id="pushState" class="pushState" hidden></p>
+    <button id="pushOff" class="lnk" type="button" hidden>Bu teslimin bildirimini kapat</button>
+    <p id="iosHint" class="iosHint" hidden>📲 <b>iPhone'da bildirim için:</b> Safari'de alttaki <b>Paylaş</b> düğmesine, sonra <b>Ana Ekrana Ekle</b>'ye dokunun. Ana ekrandaki <b>Kargom</b> simgesinden açıp “Bildirim al”a basın.</p>
+    <p id="pushMsg" class="msg" role="status" aria-live="polite"></p>
+  </div>
+</section>
 
 <div id="banner" class="banner" role="status" aria-live="polite">Yükleniyor…</div>
 
@@ -127,10 +152,11 @@
   <p>Bu sayfa teslim onayı içindir; uygulama kurmanız gerekmez.</p>
   <p>İşaretlediğiniz kapı noktası; bina numarası ve sokak adıyla birlikte, kuryelere rehber olması için ortak haritaya kaydedilir. Adınız, telefonunuz, daire veya kat bilginiz ortak haritaya kaydedilmez.</p>
   <p>Telefon, e-posta ve bu teslime ait kayıtlar en geç 48 saat içinde silinir; “Paketimi aldım” işaretlenince telefon ve e-posta hemen silinir.</p>
+  <p>Bildirim izni verirseniz tarayıcınızın bildirim adresi yalnız bu teslim için saklanır; teslim edilince ya da en geç 48 saatte silinir. Bildirimin içeriği şifreli gider.</p>
   <p>Değerlendirmeniz (puan, seçimler ve yorum) adınız ve telefonunuz olmadan, en çok 1 yıl saklanır. Yorum metnini yalnız uygulama yönetimi okur.</p>
 </footer>
 
 <script src="/static/leaflet/leaflet.js"></script>
-<script src="/static/alici.js?v=3"></script>
+<script src="/static/alici.js?v=4"></script>
 </body>
 </html>

@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from . import events
 from .auth import current_user
+from .pushes import drop_device, queue as push_queue
 from .db import SessionLocal, get_db
 from .models import Device, RelayDelivery, RelayMsg, User
 
@@ -128,8 +129,12 @@ def make_router(ttl_days: float, max_bytes: int, user_max_bytes: int, group_max:
         if d is not None and d.user_id == user.id:
             release(db, user.id, d.id)
             db.delete(d)
+            drop_device(db, user.id, b.device_id)  # 1.19.0: bu cihaza bildirim de gitmesin
             db.commit()
             purge(db)
+        else:
+            drop_device(db, user.id, b.device_id)
+            db.commit()
         return {"ok": True}
 
     @r.post("/v1/relay")
@@ -146,7 +151,7 @@ def make_router(ttl_days: float, max_bytes: int, user_max_bytes: int, group_max:
             raise HTTPException(400, "Alıcı yok")
         if len(to) > group_max - 1:
             raise HTTPException(400, f"Bir mesaj en çok {group_max - 1} kişiye gider (grup üst sınırı {group_max})")
-        users = db.query(User).filter(User.id.in_(to)).all()
+        users = db.query(User).filter(User.id.in_(to), User.deleted_at.is_(None)).all()  # 1.20.0: silinen hesaba mesaj gitmez
         found = {u.id for u in users}
         if not found:
             raise HTTPException(404, "Alıcı bulunamadı")
@@ -180,6 +185,8 @@ def make_router(ttl_days: float, max_bytes: int, user_max_bytes: int, group_max:
         for (dev,) in db.query(Device.id).filter(Device.user_id == user.id, Device.id != (b.device_id or "")).all():
             db.add(RelayDelivery(msg_id=msg.id, user_id=user.id, device_id=dev))
         events.log(db, "relay.send", user.id, n=len(found))  # yalnız kaç kişiye gittiği; içerik ve alıcılar yazılmaz
+        for uid_ in found:  # 1.19.0: telefona bildirim ("📩 Yeni mesajınız var"; içerik ve ad yok). Aynı kişiden 60 sn'de bir.
+            push_queue(db, uid_, "msg", thread=user.id)
         db.commit()
         return {"id": msg.id, "at": now.isoformat(), "recipients": sorted(found), "missing": [t for t in to if t not in found]}
 

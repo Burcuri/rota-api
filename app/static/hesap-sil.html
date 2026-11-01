@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="origin">
+<title>Rota — Hesabını sil</title>
+<meta name="theme-color" content="#0D1B2A">
+<link rel="icon" href="/static/alici-192.png">
+<link rel="stylesheet" href="/static/hesap-sil.css?v=1">
+</head>
+<body>
+<header>
+  <div class="brand">ROTA <span>Hesap silme</span></div>
+  <h1 class="title">Hesabını sil</h1>
+</header>
+
+<main>
+  <!-- 1) giriş -->
+  <section id="step-login" class="card">
+    <p class="lead">Rota hesabını uygulamayı kurmadan buradan silebilirsin. Uygulamada da aynı yer: <b>Hesabım › Giriş ve Güvenlik › Hesabımı sil</b>.</p>
+    <form id="loginForm" novalidate>
+      <label class="fld">Telefon, kullanıcı adı ya da e-posta
+        <input id="login" name="login" autocomplete="username" inputmode="email" autocapitalize="none" spellcheck="false" required>
+      </label>
+      <label class="fld">Şifre
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+      </label>
+      <button id="loginBtn" class="btn" type="submit">Devam</button>
+    </form>
+    <p class="hint">Şifreni unuttuysan uygulamada giriş ekranındaki <b>Şifremi unuttum</b>’u kullan; kod doğrulanmış e-postana ya da telefonuna gelir.</p>
+  </section>
+
+  <!-- 2) onay -->
+  <section id="step-confirm" class="card" hidden>
+    <p class="hello" id="hello"></p>
+    <div class="cols">
+      <div class="box bad">
+        <h2>Silinir</h2>
+        <ul>
+          <li>Adın, telefonun, kullanıcı adın, e-postan</li>
+          <li>Profil, işletme / sponsor bilgileri, logo, ayarlar</li>
+          <li>Puanların, Rota coin’in, reklamların ve ödüllerin</li>
+          <li>Hakkında yazılan değerlendirmeler</li>
+          <li>Canlı takip, konum ve teslim kayıtların</li>
+          <li>Bildirim kayıtların, rehber yedeğin</li>
+        </ul>
+      </div>
+      <div class="box">
+        <h2>Kalır</h2>
+        <ul>
+          <li>Ne zaman neye onay verdiğinin kaydı (adın olmadan; yasal saklama)</li>
+          <li>Güvenlik günlüğü: en çok 60 gün, adın olmadan</li>
+          <li>Mağazadan (Google Play / App Store) coin aldıysan satın alma kaydı (muhasebe için; adın olmadan)</li>
+          <li>Yönetim hesabını kara listeye aldıysa: yönetimin notu ve telefon numaranın geri çevrilemez özeti</li>
+          <li>Telefonundaki adres listeleri, notlar ve yazışmalar telefonunda kalır (uygulamadan silersen onlar da silinir)</li>
+        </ul>
+      </div>
+    </div>
+    <p class="warn">Bekleyen ödül taleplerin iptal edilir. Kuryeye kargolaman beklenen bir ödülün varsa kuryenin puanı iade edilir.</p>
+    <label class="check">
+      <input id="agree" type="checkbox">
+      <span>Hesabımın ve verilerimin <b>kalıcı</b> silineceğini, bunun <b>geri alınamayacağını</b> anladım.</span>
+    </label>
+    <button id="deleteBtn" class="btn danger" type="button" disabled>Hesabımı kalıcı sil</button>
+    <button id="backBtn" class="lnk" type="button">Vazgeç</button>
+  </section>
+
+  <!-- 3) bitti -->
+  <section id="step-done" class="card" hidden>
+    <p class="big">✓ Hesabın silindi.</p>
+    <p class="hint">Telefonundaki Rota uygulamasında oturumun kapanır. Uygulamayı kaldırınca telefondaki veriler de silinir.</p>
+  </section>
+
+  <p id="msg" class="msg" role="status" aria-live="polite"></p>
+</main>
+<script src="/static/hesap-sil.js?v=2"></script>
+</body>
+</html>

@@ -38,6 +38,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from . import events
 from .auth import current_user
+from .pushes import queue as push_queue
 from .db import SessionLocal, get_db
 from .limits import Window
 from .models import Follow, FollowPoint, Task, User, now, uid
@@ -291,6 +292,7 @@ def make_router(
         f = Follow(id=uid(), employer_id=user.id, courier_id=c.id, status="asked", expires_at=now() + timedelta(minutes=ask_min), task_no=task.task_no)
         db.add(f)
         events.log(db, "follow.ask", user.id, f.id, to=c.id, task=task.task_no)
+        push_queue(db, c.id, "follow_ask", thread=user.id)  # 1.19.0: kuryeye "📍 Canlı takip isteği geldi"
         try:
             db.commit()
         except IntegrityError:  # aynı anda başka istek açıldı
@@ -345,6 +347,7 @@ def make_router(
         f.accepted_at = t
         f.expires_at = t + timedelta(hours=max_hours)
         events.log(db, "follow.start", user.id, f.id)
+        push_queue(db, f.employer_id, "follow_ok", thread=user.id)  # 1.19.0: işverene "📍 Kurye canlı takibi kabul etti"
         try:
             db.commit()
         except IntegrityError:  # aynı anda başka takip aktif oldu

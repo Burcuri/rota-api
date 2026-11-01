@@ -88,3 +88,30 @@ footer p{margin:6px 0}
 .lnk{background:none;border:0;padding:8px 2px;min-height:44px;color:var(--ink);font:inherit;font-weight:800;text-decoration:underline;cursor:pointer}
 .note{margin:0 0 12px;padding:10px 12px;border-radius:14px;font-weight:800;border:2px solid var(--cyan);background:var(--cyanSoft);color:var(--ink)}
 .goReview{margin-top:12px;width:100%}
+
+/* ---- 1.18.0: süreç çubuğu (Migros'taki gibi üç parça): Hazırlanıyor → Yolda → Teslim edildi.
+   Biten parça turkuaz, şu anki turuncu (yavaşça nabız atar), sıradaki açık gri. Yazılar koyu tonlarla (≥ 4,5:1). */
+.track{margin:14px 16px 0;padding:14px 14px 12px;border-radius:18px;background:#fff;border:2px solid var(--line);border-bottom-width:5px;border-bottom-color:var(--depth)}
+.trackHead{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.trackTitle{margin:0;font-family:var(--display);font-weight:800;font-size:21px;line-height:1.25;color:var(--ink)}
+.track[data-stage="door"] .trackTitle{color:var(--ink)}
+.steps{list-style:none;margin:12px 0 0;padding:0;display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.step{min-width:0}
+.step .seg{display:block;height:12px;border-radius:999px;background:var(--card);border:2px solid var(--line)}
+.step.done .seg{background:var(--cyan);border-color:var(--cyan)}
+.step.now .seg{background:var(--orange);border-color:var(--orange);animation:segPulse 1.6s ease-in-out infinite}
+.step .lbl{display:block;margin-top:7px;font-weight:800;font-size:14.5px;line-height:1.2;color:var(--muted)}
+.step.done .lbl{color:var(--cyanT)}
+.step.now .lbl{color:var(--ink)}
+.step .t{display:block;min-height:1.2em;margin-top:2px;font-size:13px;font-weight:700;color:var(--muted)}
+@keyframes segPulse{0%,100%{opacity:1}50%{opacity:.45}}
+@media (prefers-reduced-motion:reduce){.step.now .seg{animation:none}}
+
+/* Bildirim kutusu: "🔔 … bildirim al" turuncu 3B düğme; açıkken turkuaz yazı; iPhone ipucu sarı kutu */
+.pushBox{margin-top:12px;padding-top:12px;border-top:2px solid var(--line)}
+.btn.bell{width:100%;background:var(--orange);color:var(--ink)}
+.pushState{margin:0;font-weight:800;color:var(--cyanT)}
+.iosHint{margin:0;padding:10px 12px;border-radius:14px;background:var(--yellowSoft);border:2px solid var(--yellow);color:var(--yellowT);font-weight:700;font-size:15.5px;line-height:1.4}
+.iosHint b{color:var(--ink)}
+.pushBox .lnk{padding:6px 2px;min-height:40px;font-size:15px}
+.pushBox .msg:empty{display:none}

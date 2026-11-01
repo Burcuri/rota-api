@@ -39,13 +39,17 @@
     var s = state; if (!s) return;
     $('app').hidden = false;
     $('addr').textContent = (s.address || '') + (s.site ? ' · ' + s.site : '');
+    renderTrack();
+    renderPush();
     var take = $('take'), box = $('takeBox');
     if (s.received) {
       setBanner('Teşekkürler, paketinizi aldığınız kaydedildi ✓', 'received');
       take.checked = true; take.disabled = true; box.className = 'take';
       $('takeHint').textContent = 'Kuryenin ekranında “Alıcı onayladı ✓” görünüyor.';
     } else if (s.canConfirm) {
-      setBanner('Kuryeniz kapıda. Paketi teslim almadan önce “Paketimi aldım” kutusunu işaretleyin.', 'arrived');
+      setBanner(s.byCourier
+        ? 'Kurye paketi teslim ettiğini bildirdi. Paketi aldıysanız “Paketimi aldım” kutusunu işaretleyin.'
+        : 'Kuryeniz kapıda. Paketi teslim almadan önce “Paketimi aldım” kutusunu işaretleyin.', 'arrived');
       take.checked = false; take.disabled = false; box.className = 'take';
       $('takeHint').textContent = 'Paketi eline aldığında kutuyu işaretle.';
     } else if (s.closed) {
@@ -54,6 +58,10 @@
       $('takeHint').textContent = 'Teslim tamamlandı.';
     } else if (LOC && !s.pin) {
       setBanner('Kuryeniz konumunuzu doğrulamanızı istiyor: kapınızın yerini haritada işaretleyip “Kapının yeri burası”na basın.', 'arrived');
+      take.checked = false; take.disabled = true; box.className = 'take off';
+      $('takeHint').textContent = 'Kurye hedefe ulaşınca bu kutu açılır.';
+    } else if (s.stage === 'preparing') {
+      setBanner('Paket yola çıkınca burada “Yolda” görünür. Kurye hedefe ulaşınca “Paketimi aldım” kutusu açılır.', '');
       take.checked = false; take.disabled = true; box.className = 'take off';
       $('takeHint').textContent = 'Kurye hedefe ulaşınca bu kutu açılır.';
     } else {
@@ -70,8 +78,129 @@
     renderReview();
   }
 
+  // ---- süreç çubuğu (1.18.0): Hazırlanıyor → Yolda → Teslim edildi
+  var STEPS = ['preparing', 'onway', 'delivered'];
+  function hhmm(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+  }
+  function renderTrack() {
+    var s = state; if (!s) return;
+    var st = STEPS.indexOf(s.stage) >= 0 ? s.stage : 'onway';
+    var idx = STEPS.indexOf(st), fin = st === 'delivered';
+    $('track').hidden = false;
+    $('track').setAttribute('data-stage', s.atDoor && !fin ? 'door' : st);
+    for (var i = 0; i < STEPS.length; i++) {
+      var el = $('st-' + STEPS[i]);
+      el.className = 'step' + (i < idx || fin ? ' done' : i === idx ? ' now' : '');
+      if (i === idx && !fin) el.setAttribute('aria-current', 'step'); else el.removeAttribute('aria-current');
+    }
+    $('t-onway').textContent = hhmm(s.departedAt);
+    $('t-delivered').textContent = hhmm(s.deliveredAt);
+    $('trackTitle').textContent = fin ? 'Teslim edildi ✓' : s.atDoor ? 'Kuryeniz kapıda' : st === 'onway' ? 'Kargonuz yolda' : 'Siparişiniz hazırlanıyor';
+  }
+
+  // ---- tarayıcı bildirimi (1.18.0): yalnız alıcı isterse ve izin verirse; abonelik yalnız bu teslim için
+  var PUSH_LS = 'rota.push.' + TOKEN, pushBusy = false;
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) { /* gizli sekme */ } }
+  var IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  var STANDALONE = window.navigator.standalone === true || !!(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+  var PUSH_OK = !!(window.isSecureContext && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window);
+
+  function b64uBytes(s) {
+    s = String(s || '').replace(/-/g, '+').replace(/_/g, '/');
+    while (s.length % 4) s += '=';
+    var raw = atob(s), out = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+  function sameKey(sub, key) {
+    try {
+      var a = new Uint8Array(sub.options.applicationServerKey), b = b64uBytes(key);
+      if (a.length !== b.length) return false;
+      for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+      return true;
+    } catch (e) { return true; }
+  }
+  function askPermission() {
+    return new Promise(function (resolve) {
+      var p = Notification.requestPermission(function (r) { resolve(r); });  // eski Safari geri çağırma kullanır
+      if (p && p.then) p.then(resolve);
+    });
+  }
+  function show1(id, text) { var el = $(id); el.hidden = false; if (text !== undefined) el.textContent = text; }
+
+  function renderPush() {
+    var s = state, box = $('pushBox'), p = s && s.push;
+    ['pushOn', 'pushState', 'pushOff', 'iosHint'].forEach(function (id) { $(id).hidden = true; });
+    if (!s || !p || !p.open) { box.hidden = true; return; }
+    if (!p.on && lsGet(PUSH_LS)) lsSet(PUSH_LS, null);  // sunucuda artık yok (silindi / süresi doldu)
+    var onway = s.stage === 'onway';
+    box.hidden = false;
+    if (p.on && lsGet(PUSH_LS)) {
+      show1('pushState', onway ? '🔔 Bildirim açık: kurye kapıya gelince haber vereceğiz.' : '🔔 Bildirim açık: kargonuz yola çıkınca haber vereceğiz.');
+      show1('pushOff');
+      return;
+    }
+    if (!PUSH_OK) {
+      if (IOS && !STANDALONE) { show1('iosHint'); return; }
+      if (IOS) { show1('pushState', 'Bu iPhone\'da bildirim için iOS 16.4 veya üstü gerekir.'); return; }
+      box.hidden = true;
+      return;
+    }
+    if (Notification.permission === 'denied') {
+      show1('pushState', 'Bildirimler bu tarayıcıda kapalı. Açmak için tarayıcı ayarlarından bu siteye bildirim izni verin.');
+      return;
+    }
+    show1('pushOn', onway ? '🔔 Kurye gelince bildirim al' : '🔔 Yola çıkınca bildirim al');
+  }
+
+  $('pushOn').addEventListener('click', function () {
+    if (pushBusy || !state || !state.push || !PUSH_OK) return;
+    var key = state.push.key, btn = $('pushOn');
+    pushBusy = true; btn.disabled = true; say($('pushMsg'), 'Bildirim açılıyor…', '');
+    var perm = Notification.permission === 'granted' ? Promise.resolve('granted') : askPermission();
+    perm.then(function (r) {
+      if (r !== 'granted') throw new Error(r === 'denied' ? 'Bildirim izni verilmedi.' : 'Bildirim izni verilmedi; isterseniz tekrar deneyin.');
+      return navigator.serviceWorker.register('/a/sw.js', { scope: '/a/' }).then(function () { return navigator.serviceWorker.ready; });
+    }).then(function (reg) {
+      return reg.pushManager.getSubscription().then(function (sub) {
+        if (sub && !sameKey(sub, key)) return sub.unsubscribe().then(function () { return null; });
+        return sub;
+      }).then(function (sub) {
+        return sub || reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uBytes(key) });
+      });
+    }).then(function (sub) {
+      var j = sub.toJSON ? sub.toJSON() : sub;
+      return api('POST', '/push', { endpoint: j.endpoint, keys: j.keys || {} }).then(function () { lsSet(PUSH_LS, j.endpoint); });
+    }).then(function () {
+      say($('pushMsg'), '', '');
+      return load();
+    }).catch(function (e) {
+      say($('pushMsg'), (e && e.message) || 'Bildirim açılamadı.', 'bad');
+    }).then(function () { pushBusy = false; btn.disabled = false; renderPush(); });
+  });
+
+  $('pushOff').addEventListener('click', function () {
+    var ep = lsGet(PUSH_LS);
+    if (!ep) { renderPush(); return; }
+    api('POST', '/push/off', { endpoint: ep }).then(function () {
+      lsSet(PUSH_LS, null);
+      say($('pushMsg'), 'Bu teslimin bildirimi kapatıldı.', 'ok');
+      return load();
+    }).catch(function (e) { say($('pushMsg'), e.message || 'Kapatılamadı.', 'bad'); });
+  });
+
+  // Bildirim geldiğinde sayfa açıksa durum hemen yenilenir
+  if ('serviceWorker' in navigator && navigator.serviceWorker.addEventListener) {
+    navigator.serviceWorker.addEventListener('message', function (ev) { if (ev.data && ev.data.type === 'rota-refresh') load(); });
+  }
+
   function invalid(msg) {
-    $('app').hidden = true; $('addr').textContent = '';
+    $('app').hidden = true; $('track').hidden = true; $('addr').textContent = '';
     setBanner(msg || 'Bu bağlantı geçersiz ya da süresi dolmuş. Kuryenizden yenisini isteyin.', 'bad');
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   }
