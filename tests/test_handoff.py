@@ -262,7 +262,10 @@ def test_state_shows_no_courier_or_personal_data():
     tok, uid_ = courier()
     h = create(tok, send=True)
     st = client.get(f"/a/{token_of(h)}/state").json()
-    assert set(st) == {"status", "canConfirm", "received", "closed", "review", "address", "area", "site", "start", "pin", "phone", "email", "expiresAt"}
+    assert set(st) == {"status", "canConfirm", "received", "closed", "review", "address", "area", "site", "start", "pin", "phone", "email", "expiresAt",
+                       # 1.18.0: süreç çubuğu + tarayıcı bildirimi (kurye / işveren bilgisi yok)
+                       "stage", "atDoor", "departedAt", "deliveredAt", "byCourier", "push"}
+    assert set(st["push"]) == {"key", "on", "open"}
     assert st["review"] == {"allowed": False, "done": False, "data": None}  # kurye hedefe ulaşmadan anket açılmaz
     flat = json.dumps(st)
     assert uid_ not in flat and "Test" not in flat  # kuryenin kimliği / adı alıcı sayfasına çıkmaz
@@ -275,9 +278,10 @@ def test_unknown_or_malformed_tokens_do_not_reveal_anything():
         assert client.get(f"/a/{t}/state").status_code == 404
         assert client.post(f"/a/{t}/received", json={"checked": True}).status_code == 404
         assert client.post(f"/a/{t}/pin", json={"lat": 36.5, "lon": 32.1}).status_code == 404
-    # sayfa her kod için aynı (kodun var olup olmadığı sayfadan anlaşılmaz)
+    # sayfa her kod için aynı (kodun var olup olmadığı sayfadan anlaşılmaz); 1.18.0: yalnız ana ekran bilgisinde kodun kendisi geçer
     assert client.get("/a/AAAAAAAAAAAAAAAA").status_code == 200
-    assert client.get("/a/AAAAAAAAAAAAAAAA").text == client.get("/a/BBBBBBBBBBBBBBBB").text
+    a = client.get("/a/AAAAAAAAAAAAAAAA").text.replace("AAAAAAAAAAAAAAAA", "KOD")
+    assert a == client.get("/a/BBBBBBBBBBBBBBBB").text.replace("BBBBBBBBBBBBBBBB", "KOD")
 
 
 def test_page_and_static_files_served_with_secure_headers():

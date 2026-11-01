@@ -153,3 +153,35 @@ def test_empty_dir_without_index_is_404(tmp_path, monkeypatch):
     monkeypatch.setenv("WEB_APP_DIR", str(tmp_path / "bos"))
     c = TestClient(app)
     assert c.get("/web/").status_code == 404
+
+
+def test_index_gets_home_screen_tags_and_manifest(tmp_path, monkeypatch):
+    """1.19.0: web ikizi ana ekrana eklenebilir (iPhone'da tarayıcı bildirimi için şart): index.html'e manifest + simge eklenir."""
+    import os
+
+    root = tmp_path / "webapp"
+    root.mkdir()
+    html = "<!doctype html><html><head><title>Rota</title></head><body><div id='root'></div>" + ("x" * 2000) + "</body></html>"
+    (root / "index.html").write_text(html, encoding="utf-8")
+    monkeypatch.setenv("WEB_APP_DIR", str(root))
+    webapp._index_cache.clear()
+    c = TestClient(app)
+    for p in ("/web/", "/web/gorevler", "/web/index.html"):
+        r = c.get(p, headers={"Accept-Encoding": "identity"})
+        assert r.status_code == 200 and r.headers["cache-control"] == "no-cache", p
+        assert '<link rel="manifest" href="/web/manifest.webmanifest">' in r.text and 'name="apple-mobile-web-app-capable"' in r.text, p
+        assert r.text.index('rel="manifest"') < r.text.index("</head>") and "<div id='root'>" in r.text, p
+    r = c.get("/web/", headers={"Accept-Encoding": "gzip"})
+    assert r.headers["content-encoding"] == "gzip" and 'rel="manifest"' in r.text
+    m = c.get("/web/manifest.webmanifest")
+    assert m.status_code == 200 and m.headers["content-type"].startswith("application/manifest+json")
+    j = m.json()
+    assert j["start_url"] == "/web/" and j["scope"] == "/web/" and j["display"] == "standalone" and j["short_name"] == "Rota"
+    for ic in j["icons"]:
+        assert c.get(ic["src"]).status_code == 200, ic["src"]
+    assert c.get("/static/alici-180.png").status_code == 200  # iPhone ana ekran simgesi
+    # paket kendi manifestini koyduysa ikinci kez eklenmez
+    (root / "index.html").write_text(html.replace("</head>", '<link rel="manifest" href="/web/kendi.json"></head>'), encoding="utf-8")
+    os.utime(root / "index.html", ns=(3_000_000_000_000_000_000, 3_000_000_000_000_000_000))
+    r = c.get("/web/", headers={"Accept-Encoding": "identity"})
+    assert r.text.count('rel="manifest"') == 1 and "kendi.json" in r.text

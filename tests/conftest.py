@@ -18,12 +18,21 @@ import pytest  # noqa: E402
 @pytest.fixture(autouse=True)
 def _reset_admin_limits():
     """Yönetici giriş sınırları testler arasında sıfırlanır (bellek içi sayaçlar)."""
+    from app import security
+    from app.db import SessionLocal
     from app.main import admin_router, pw_fail
 
-    for lim in admin_router.limiters:
-        lim.reset()
-    pw_fail.reset()
+    def clean():
+        for lim in admin_router.limiters:
+            lim.reset()
+        pw_fail.reset()
+        # 1.20.0: giriş kilidi (bellek içi IP sayacı + veritabanındaki hesap kilitleri) ve kod sınırları
+        db = SessionLocal()
+        try:
+            security.reset_limits(db)
+        finally:
+            db.close()
+
+    clean()
     yield
-    for lim in admin_router.limiters:
-        lim.reset()
-    pw_fail.reset()
+    clean()
