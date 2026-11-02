@@ -1,3 +1,22 @@
+# Sunucu güncellemesi — Dilim 31 · büyük harf kuralı, web ikizi 0.27.1 (2 Kasım 2026) — sunucu 1.21.1 (Python aynı)
+
+**Dilim 30'u yüklediysen yalnız iki klasör yeter** (bu zip öncekilerin hepsini içerir). Python, tablo, paket, anahtar değişmedi.
+Ayrıntı: uygulama paketindeki `docs/DILIM-31.md`.
+- **`app/webapp/`** (web ikizi) **0.27.1**: hiçbir ad, soyad, yer adı, not ya da adres tarifi küçük harfle başlamaz — yazarken
+  kendiliğinden, ekranda da (eski / küçük harfli kayıt dahil). Girişteki kart artık "Merhaba Burcu Yıldırım".
+- **`app/static/`**: yalnız `yonetim.js` (yönetimde adlar / yerler / notlar düzgün; "Ad" ve not kutularında yazarken büyük harf) ve
+  `alici.js` (alıcı sayfasında adres düzgün; yorumda ilk harf büyük) değişti. Klasördeki öbür dosyalar aynı.
+
+**Yapılacak (GitHub `Burcuri/rota-api`):**
+1. `app` klasörüne gir → `webapp` klasörünü sil (⋯ → *Delete directory*) → Commit.
+2. Yine `app` klasöründeyken **Add file → Upload files** → zip'teki `app/webapp` ve `app/static` klasörlerini birlikte sürükle → Commit.
+   (Aynı adlı dosyaların üstüne yazılır; bu yükleme 54 dosya, sınır 100.)
+3. Ana klasöre dön → **Add file → Upload files** → zip'teki `GUNCELLEME_ADIMLARI.md` → Commit.
+4. Render › **rota-sunucu** › **Manual Deploy → Deploy latest commit** (kendiliğinden kurmuyor) → **Live** olunca
+   `https://rota-sunucu.onrender.com/web/` aç: girişteki kartta ad büyük harfle mi bak.
+
+---
+
 # Sunucu güncellemesi — Dilim 30 · web ikizi 0.27.0 + Supabase ayarı (2 Kasım 2026) — sunucu 1.21.1
 
 **Dilim 27'yi yüklediysen yalnız aşağıdaki 4 parça yeter** (bu zip öncekilerin hepsini içerir). Yeni tablo, sütun, paket, anahtar YOK.
