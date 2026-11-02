@@ -9,6 +9,34 @@
 
   function say(el, text, cls) { el.textContent = text || ''; el.className = 'msg' + (cls ? ' ' + cls : ''); }
 
+  // 2 Kasım 2026 (kullanıcı kararı): yer adı ve yazılan not küçük harfle başlamaz; uygulamadaki services/nameCase.ts ile aynı kural
+  // (Türkçe i → İ, ı → I; "TOKİ" gibi büyük yazılmış kısaltmalar ve "iPhone" gibi markalar bozulmaz).
+  var UP = { i: 'İ', 'ı': 'I' }, LOW = { I: 'ı', 'İ': 'i' };
+  function up(c) { return UP[c] || c.toUpperCase(); }
+  function low(t) { var o = ''; for (var i = 0; i < t.length; i++) { var c = t.charAt(i); o += LOW[c] || c.toLowerCase(); } return o; }
+  function upAll(t) { var o = ''; for (var i = 0; i < t.length; i++) o += up(t.charAt(i)); return o; }
+  function brandish(c, nx) { return /[a-zçğıöşü]/.test(c) && /[A-ZÇĞİIÖŞÜ]/.test(nx || ''); }
+  function capWords(t) { return t ? t.replace(/(^|[\s\-(])([^\s\-(])([^\s\-(]?)/g, function (m, a, c, nx) { return a + (brandish(c, nx) ? c : up(c)) + nx; }) : t; }
+  function capFirst(t) { return t ? t.replace(/^(\s*)(\S)(\S?)/, function (m, a, c, nx) { return a + (brandish(c, nx) ? c : up(c)) + nx; }) : t; }
+  function place(v) {
+    var t = String(v == null ? '' : v).trim().replace(/\s+/g, ' ');
+    if (!t) return t;
+    var hasUp = low(t) !== t, hasLow = upAll(t) !== t, n = t.replace(/[^A-Za-zÇĞİIÖŞÜçğıöşü]/g, '').length;
+    return hasUp && !hasLow && (/\s/.test(t) || n >= 5) ? capWords(low(t)) : capWords(t);
+  }
+  /** Yazarken ilk harf büyür (alıcının notu). */
+  function capsOn(el) {
+    if (!el) return;
+    el.setAttribute('autocapitalize', 'sentences');
+    el.addEventListener('input', function () {
+      var v = el.value, w = capFirst(v);
+      if (w === v) return;
+      var at = el.selectionStart;
+      el.value = w;
+      try { el.setSelectionRange(at, at); } catch (e) { /* */ }
+    });
+  }
+
   /** Sunucu düz yazı verirse onu, değilse (doğrulama hatası vb.) anlaşılır genel bir cümle gösterir. */
   function errText(status, detail) {
     if (typeof detail === 'string' && detail) return detail;
@@ -38,7 +66,7 @@
   function render() {
     var s = state; if (!s) return;
     $('app').hidden = false;
-    $('addr').textContent = (s.address || '') + (s.site ? ' · ' + s.site : '');
+    $('addr').textContent = place(s.address || '') + (s.site ? ' · ' + place(s.site) : '');
     renderTrack();
     renderPush();
     var take = $('take'), box = $('takeBox');
@@ -348,6 +376,7 @@
     for (var i = 0; i < all.length; i++) all[i].setAttribute('aria-pressed', 'false');
     b.setAttribute('aria-pressed', was ? 'false' : 'true');
   });
+  capsOn($('comment'));
   $('comment').addEventListener('input', function () { $('cnt').textContent = String($('comment').value.length); });
   $('rvForm').addEventListener('submit', function (e) {
     e.preventDefault();

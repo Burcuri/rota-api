@@ -59,6 +59,7 @@
         else if (k === 'text') n.textContent = v;
         else if (k.slice(0, 2) === 'on') n.addEventListener(k.slice(2), v);
         else if (k === 'value') n.value = v;
+        else if (k === 'caps') capsOn(n, v);
         else if (k === 'checked' || k === 'disabled' || k === 'hidden' || k === 'selected') n[k] = true;
         else n.setAttribute(k, v === true ? '' : v);
       });
@@ -73,6 +74,65 @@
   function when(iso) { if (!iso) return '—'; try { return new Date(iso).toLocaleString('tr-TR'); } catch (e) { return iso; } }
   function stars(n) { n = Math.max(0, Math.min(5, Math.round(n || 0))); return '★'.repeat(n) + '☆'.repeat(5 - n); }
   function say(node, text, cls) { node.textContent = text || ''; node.className = 'msg' + (cls ? ' ' + cls : ''); }
+
+  // ------------------------------------------------------------------ büyük harf (2 Kasım 2026)
+  // Kullanıcı kararı: ad, soyad, yer adı ve notlar ekranda küçük harfle başlamaz; yazarken de baş harf kendiliğinden büyür.
+  // Uygulamadaki services/nameCase.ts ile aynı kural (Türkçe i → İ, ı → I; "TOKİ", "ABC Lojistik", "iPhone" bozulmaz).
+  const HARF = (() => {
+    const UP = { i: 'İ', 'ı': 'I' }, LOW = { I: 'ı', 'İ': 'i' };
+    const up = (c) => UP[c] || c.toUpperCase();
+    const low = (t) => Array.from(t).map((c) => LOW[c] || c.toLowerCase()).join('');
+    const upAll = (t) => Array.from(t).map(up).join('');
+    const letters = (t) => t.replace(/[^A-Za-zÇĞİIÖŞÜçğıöşü]/g, '').length;
+    const brandish = (c, nx) => /[a-zçğıöşü]/.test(c) && /[A-ZÇĞİIÖŞÜ]/.test(nx || '');
+    const words = (t) => (t ? t.replace(/(^|[\s\-(])([^\s\-(])([^\s\-(]?)/g, (m, a, c, nx) => a + (brandish(c, nx) ? c : up(c)) + nx) : t);
+    const first = (t) => (t ? t.replace(/^(\s*)(\S)(\S?)/, (m, a, c, nx) => a + (brandish(c, nx) ? c : up(c)) + nx) : t);
+    const title = (t) => low(t).replace(/(^|[\s\-'’])(\S)/g, (m, a, c) => a + up(c));
+    const FIXED = new Set(['Silinmiş üye']); // sunucunun sabit etiketi (hesabını silen üye) yazıldığı gibi kalır
+    function name(v) {
+      const t = String(v == null ? '' : v).replace(/\s+/g, ' ').trim();
+      if (!t) return '';
+      if (FIXED.has(t)) return t;
+      const hasUp = low(t) !== t, hasLow = upAll(t) !== t;
+      if (!hasUp || (!hasLow && (/\s/.test(t) || letters(t) >= 5))) return title(t);
+      return words(t);
+    }
+    function place(v) {
+      const t = String(v == null ? '' : v).trim().replace(/\s+/g, ' ');
+      if (!t) return t;
+      const hasUp = low(t) !== t, hasLow = upAll(t) !== t;
+      return hasUp && !hasLow && (/\s/.test(t) || letters(t) >= 5) ? words(low(t)) : words(t);
+    }
+    return { name, place, first, words };
+  })();
+  const NAME_KEYS = new Set(['name', 'fullName', 'displayName', 'firstName', 'ownerName', 'employerName', 'courierName', 'businessName', 'company', 'signboard', 'brand', 'customer', 'sender', 'recipient', 'shown']);
+  const PLACE_KEYS = new Set(['neighborhood', 'district', 'province', 'city', 'street', 'site', 'address', 'taxOffice', 'dName', 'nName', 'sName']);
+  const TEXT_KEYS = new Set(['title', 'note', 'notes', 'landmark', 'desc', 'description', 'reason']);
+  /** Sunucudan gelen veride kişi / işletme / yer / not alanlarının baş harfi (yalnız gösterim; e-posta, kod, telefon, bağlantıya dokunulmaz). */
+  function caseData(x, depth) {
+    depth = depth || 0;
+    if (depth > 8 || x === null || typeof x !== 'object') return x;
+    if (Array.isArray(x)) return x.map((y) => caseData(y, depth + 1));
+    const o = {};
+    Object.keys(x).forEach((k) => {
+      const v = x[k];
+      if (typeof v !== 'string') { o[k] = caseData(v, depth + 1); return; }
+      if (!v || !/[A-Za-zÇĞİIÖŞÜçğıöşü]/.test(v) || /^(https?:|mailto:|tel:)/i.test(v) || (/@/.test(v) && !/\s/.test(v))) { o[k] = v; return; }
+      o[k] = (NAME_KEYS.has(k) ? HARF.name(v) : PLACE_KEYS.has(k) ? HARF.place(v) : TEXT_KEYS.has(k) ? HARF.first(v) : v) || v;
+    });
+    return o;
+  }
+  /** Yazarken: 'words' → her kelimenin baş harfi (ad), başka → yalnız ilk harf (not, neden). */
+  function capsOn(n, mode) {
+    n.setAttribute('autocapitalize', mode === 'words' ? 'words' : 'sentences');
+    n.addEventListener('input', () => {
+      const v = n.value, w = mode === 'words' ? HARF.words(v) : HARF.first(v);
+      if (w === v) return;
+      const at = n.selectionStart;
+      n.value = w;
+      try { n.setSelectionRange(at, at); } catch (e) { /* bazı kutularda imleç yok */ }
+    });
+  }
 
   function api(method, path, body, opts) {
     opts = opts || {};
@@ -91,7 +151,7 @@
           if (r.status === 401 && token && !opts.anon) { dropSession(); showLogin('Oturum sona erdi, tekrar giriş yapın.'); }
           throw err;
         }
-        return j;
+        return caseData(j);
       }),
     );
   }
@@ -298,7 +358,7 @@
     }
 
     // --- bilgileri düzenle
-    const f = { name: h('input', { value: d.name || '', maxlength: '120' }), phone: h('input', { value: d.phone || '', inputmode: 'tel' }), username: h('input', { value: d.username || '', autocapitalize: 'none' }), email: h('input', { value: d.email || '', type: 'email' }),
+    const f = { name: h('input', { value: d.name || '', maxlength: '120', caps: 'words' }), phone: h('input', { value: d.phone || '', inputmode: 'tel' }), username: h('input', { value: d.username || '', autocapitalize: 'none' }), email: h('input', { value: d.email || '', type: 'email' }),
       role: h('select', null, ...Object.keys(ROLE).map((k) => h('option', { value: k, text: ROLE[k], selected: d.role === k }))) };
     const emsg = h('div', { class: 'msg', role: 'status' });
     c.appendChild(h('div', { class: 'box' }, h('h3', { text: 'Hesap bilgileri' }),
@@ -317,7 +377,7 @@
         kv([['Neden', d.bannedReason], ['Ne zaman', when(d.bannedAt)]]),
         h('button', { type: 'button', class: 'btn', text: 'Askıyı kaldır', onclick: () => api('POST', '/v1/admin/users/' + d.id + '/unban').then(() => openUser(d.id)).catch((er) => say(bmsg, er.message, 'bad')) }), bmsg));
     } else {
-      const reason = h('textarea', { maxlength: '300', placeholder: 'Örn. sahte ilan verdi' });
+      const reason = h('textarea', { maxlength: '300', placeholder: 'Örn. sahte ilan verdi', caps: 'first' });
       c.appendChild(h('div', { class: 'box' }, h('h3', { text: 'Uygulamadan men et' }),
         h('p', { class: 'small muted', text: 'Üye giremez, açık oturumları kapanır, açık ilanları kaldırılır. Aşağıdaki neden üyeye gösterilir.' }),
         h('label', { class: 'f' }, 'Men nedeni (üyeye gösterilir)', reason),
@@ -561,7 +621,7 @@
   // ------------------------------------------------------------------ Yorumlar
   function reviewCard(r, changed) {
     const msg = h('span', { class: 'small bad' });
-    const note = h('input', { placeholder: 'Gizleme notu (isteğe bağlı)', maxlength: '200', 'aria-label': 'Gizleme notu' });
+    const note = h('input', { placeholder: 'Gizleme notu (isteğe bağlı)', maxlength: '200', 'aria-label': 'Gizleme notu', caps: 'first' });
     const rows = [];
     if (r.tags && r.tags.length) rows.push(h('p', { class: 'small', text: 'Seçimler: ' + r.tags.join(', ') }));
     if (r.addressOk != null) rows.push(h('p', { class: 'small', text: 'Adres doğru muydu: ' + (r.addressOk ? 'evet' : 'hayır') }));
@@ -636,7 +696,7 @@
       if (x.note) box.appendChild(h('div', { class: 'small', text: 'Kuryenin notu: ' + x.note }));
       if (x.closeReason) box.appendChild(h('div', { class: 'muted small', text: 'Kapanış: ' + (CREASON[x.closeReason] || x.closeReason) + ' · ' + when(x.closedAt) }));
       if (x.status === 'pending' || x.status === 'shipped' || x.status === 'disputed') {
-        const note = h('input', { type: 'text', placeholder: 'Not (işlem günlüğüne yazılır)', maxlength: '200' });
+        const note = h('input', { type: 'text', placeholder: 'Not (işlem günlüğüne yazılır)', maxlength: '200', caps: 'first' });
         const act = (action) => api('POST', '/v1/admin/rewards/claims/' + encodeURIComponent(x.id) + '/resolve', { action, note: note.value }).then((y) => { box.replaceWith(claimBox(y)); }).catch((er) => say(info, er.message, 'bad'));
         box.appendChild(h('div', { class: 'row' }, note,
           confirmBtn('Puanı iade et', 'danger', 'Kuryeye puan iade edilsin mi?', () => act('refund')),
@@ -668,9 +728,9 @@
         if (!flagged.length) { watch.appendChild(h('p', { class: 'muted', text: 'Son 7 günde şüpheli puan yok.' })); return; }
         flagged.forEach((x) => {
           const d = h('input', { type: 'number', placeholder: 'Puan (örn. -60)', style: 'width:8em' });
-          const n = h('input', { type: 'text', placeholder: 'Neden', maxlength: '120' });
+          const n = h('input', { type: 'text', placeholder: 'Neden', maxlength: '120', caps: 'first' });
           const msg = h('span', { class: 'small' });
-          const bn = h('input', { type: 'text', placeholder: 'Kara liste notu', maxlength: '500', value: x.flags.join(', ') });
+          const bn = h('input', { type: 'text', placeholder: 'Kara liste notu', maxlength: '500', value: x.flags.join(', '), caps: 'first' });
           const bl = x.blacklisted ? h('span', { class: 'pill bad', text: 'Kara listede' }) : h('span', { class: 'row' }, bn, h('button', { type: 'button', class: 'btn small danger', text: 'Kara listeye al', onclick: () => {
             api('POST', '/v1/admin/blacklist', { userId: x.id, note: bn.value }).then(() => loadWatch()).catch((er) => { msg.textContent = er.message; });
           } }));
@@ -738,7 +798,7 @@
     if (!inUser) {
       if (m.blacklisted) row.appendChild(confirmBtn('Kara listeden çıkar', 'ghost', 'Kara listeden çıkarılsın mı?', () => api('DELETE', '/v1/admin/blacklist/' + uid).then(() => refresh()).catch((er) => say(msg, er.message, 'bad'))));
       else {
-        const note = h('input', { type: 'text', placeholder: 'Kara liste notu (neden)', maxlength: '500', value: st.reasons.join('; ') });
+        const note = h('input', { type: 'text', placeholder: 'Kara liste notu (neden)', maxlength: '500', value: st.reasons.join('; '), caps: 'first' });
         row.appendChild(note);
         row.appendChild(h('button', { type: 'button', class: 'btn small danger', text: 'Kara listeye al', onclick: () => post('/v1/admin/blacklist', { userId: x.id, note: note.value }) }));
       }
@@ -751,7 +811,7 @@
   /** Üye ayrıntısındaki kara liste + yönetim notu kutusu. */
   function blacklistBox(id, m, refresh) {
     const msg = h('div', { class: 'msg', role: 'status' });
-    const note = h('textarea', { maxlength: '500', placeholder: 'Yönetim notu (yalnız yönetim görür). Kara listeye alırken neden zorunlu.' });
+    const note = h('textarea', { maxlength: '500', placeholder: 'Yönetim notu (yalnız yönetim görür). Kara listeye alırken neden zorunlu.', caps: 'first' });
     note.value = m.note || '';
     const uid = encodeURIComponent(id);
     const box = h('div', { class: 'box' + (m.blacklisted ? ' bad' : ''), 'data-blacklist': id },
@@ -772,11 +832,11 @@
   function tabKaraliste() {
     const c = ctx.content;
     const who = h('input', { type: 'text', placeholder: 'Kullanıcı no (KRY- / ISV- / SPN-…), telefon ya da kimlik', class: 'grow', 'aria-label': 'Üye' });
-    const note = h('textarea', { maxlength: '500', placeholder: 'Neden (yalnız yönetim görür)', 'aria-label': 'Kara liste notu' });
+    const note = h('textarea', { maxlength: '500', placeholder: 'Neden (yalnız yönetim görür)', 'aria-label': 'Kara liste notu', caps: 'first' });
     const amsg = h('div', { class: 'msg', role: 'status' });
     const list = h('div');
     function card(x) {
-      const n = h('textarea', { maxlength: '500', 'aria-label': 'Not' }); n.value = x.note || '';
+      const n = h('textarea', { maxlength: '500', 'aria-label': 'Not', caps: 'first' }); n.value = x.note || '';
       const msg = h('div', { class: 'msg', role: 'status' });
       const uid = encodeURIComponent(x.id);
       return h('div', { class: 'box bad', 'data-bl': x.id },
@@ -819,7 +879,7 @@
     const box = h('div', { class: 'box', 'data-coins': uid }, h('h3', { text: 'Rota coin ve reklamlar' }));
     const body = h('div'); box.appendChild(body); loading(body);
     const delta = h('input', { type: 'number', step: '1', placeholder: '+50 / -50', 'aria-label': 'Coin düzeltmesi' });
-    const note = h('input', { type: 'text', maxlength: '120', placeholder: 'Neden (üyeye bildirim gider)', class: 'grow', 'aria-label': 'Coin düzeltme nedeni' });
+    const note = h('input', { type: 'text', maxlength: '120', placeholder: 'Neden (üyeye bildirim gider)', class: 'grow', 'aria-label': 'Coin düzeltme nedeni', caps: 'first' });
     const msg = h('div', { class: 'msg', role: 'status' });
     function load() {
       api('GET', '/v1/admin/users/' + encodeURIComponent(uid) + '/coins').then((r) => {
