@@ -155,7 +155,7 @@ def _housekeeping_loop():
             print("[temizlik] hata:", type(e).__name__, flush=True)
 
 
-app = FastAPI(title="Rota Asistan", version="1.21.0", lifespan=lifespan)
+app = FastAPI(title="Rota Asistan", version="1.21.1", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
