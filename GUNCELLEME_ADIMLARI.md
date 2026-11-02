@@ -1,3 +1,27 @@
+# Sunucu güncellemesi — Dilim 30 · web ikizi 0.27.0 + Supabase ayarı (2 Kasım 2026) — sunucu 1.21.1
+
+**Dilim 27'yi yüklediysen yalnız aşağıdaki 4 parça yeter** (bu zip öncekilerin hepsini içerir). Yeni tablo, sütun, paket, anahtar YOK.
+Ayrıntı: uygulama paketindeki `docs/DILIM-30.md`.
+- **`app/webapp/`** (web ikizi) 0.24.0'dan **0.27.0**'a yenilendi: Expo SDK 58 derlemesi; girişte "ROTA" altında küçük "Asistan";
+  Yardım'daki izin ve bildirim SSS'leri yeni sıraya göre; tekrar eden cümleler çıktı (web ses paketi sorusu, "Adres okuma kapalı" uyarısı).
+  Harita aynı (Leaflet + OpenStreetMap).
+- **`app/db.py`**: veritabanı artık **Supabase** ("Session pooler" adresi; Render'ın ücretsiz veritabanının süresi 1 Kasım'da doldu).
+  Ücretsiz Supabase havuzunun bağlantı sınırı düşük → sunucu en çok 10 bağlantı tutar; boşta kalan bağlantı 5 dakikada yenilenir,
+  kullanmadan önce yoklanır. İstersen Render › Environment'ta `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` ile değişir (gerekmez).
+- **`app/main.py`**: yalnız sürüm (1.21.1).
+- **`render.yaml`**: Render veritabanı satırları çıktı (servis elle kurulduğu için zaten kullanılmıyordu; yanlışlıkla yeni ücretsiz
+  veritabanı açılmasın).
+
+**Yapılacak (GitHub `Burcuri/rota-api`):**
+1. `app` klasörüne gir → `webapp` klasörünü sil (⋯ → *Delete directory*) → Commit.
+2. Yine `app` klasöründeyken **Add file → Upload files** → zip'teki `app/webapp` klasörünü (23 dosya) ve `app/db.py`, `app/main.py`
+   dosyalarını sürükle → Commit. (GitHub bir seferde en çok 100 dosya alır; bu yükleme 25 dosya.)
+3. Ana klasöre dön → **Add file → Upload files** → zip'teki `render.yaml` ve `GUNCELLEME_ADIMLARI.md` → Commit.
+4. Render kendisi kurar (2–3 dk) → **Live** → `https://rota-sunucu.onrender.com/web/` açılıyor mu, girişte "ROTA" altında "Asistan"
+   görünüyor mu bak.
+
+---
+
 # Sunucu güncellemesi — Dilim 27 · 0.24.0 konum "Kullanırken", kapı haritası (1 Kasım 2026) — sunucu 1.21.0
 
 **Dilim 26'yı henüz yüklemediysen doğrudan bunu yükle** (bu zip öncekilerin hepsini içerir). Python değişti: sürüm 1.21.0; yeni tablo,
@@ -505,7 +529,7 @@ Yönetim **göremez:** mesajlar, adres listeleri (telefonlarda durur), alıcın�
 
 - **Yönetici her üyenin hesap bilgisine ve yorum metinlerine erişir** (aydınlatma metninde bildirilir); bu yüzden güçlü şifre + 2FA önemlidir. Mesajları ve adres listelerini göremez (telefonlarda durur); takip kayıtlarına (yol izi, biten durakların sokak + kapı no etiketi, saatler; 48 saat) bakabilir, her bakış işlem günlüğüne yazılır.
 - **Üye girişinde (telefon + şifre) hız sınırı yok**; yönetici girişinde var. Hız sınırları IP'ye göredir (`X-Forwarded-For` taklit edilebilir); güvenlik duvarı değil, yavaşlatıcıdır.
-- **Ücretsiz Render PostgreSQL oluşturulduktan 30 gün sonra sona erer; 14 günlük ek süreden sonra veritabanı ve içindeki her şey silinir.** Üyeler, değerlendirmeler ve kapı haritası orada birikiyor: asıl varlığın bu. Kesin tarih için Render → `hafiza`. Ücretli plana geçmedikçe (ya da düzenli yedek almadıkça) veriler kaybolur.
+- ~~Ücretsiz Render PostgreSQL oluşturulduktan 30 gün sonra sona erer …~~ → 1 Kasım 2026'da süresi doldu; **veritabanı artık Supabase'de** (Rota › rota-api, Frankfurt, ücretsiz). Ücretsiz Supabase projesi süreyle silinmez; bir hafta hiç kullanılmazsa **uyur** (veri kalır, panelden "Resume project" ile açılır; sunucu uyanıkken düzenli temizlik sorguları yaptığından normalde uyumaz). Yayında günlük yedek için ücretli plan (yayın öncesi son hazırlık). Üyeler, değerlendirmeler ve kapı haritası orada birikiyor: asıl varlığın bu.
 - Ortak haritada **üçüncü kişilerin adres bilgisi** (sokak + kapı no + site/bina adı + konum; ad, telefon, daire, kat yok) toplanır. Hukuki metinler **taslaktır**; yayından önce gözden geçirilmelidir.
 - Hesabı silme ucu henüz yok. Sunucu mesajın **içine bakmaz**.
 - Web ikizi ve alıcı sayfası harita karolarını OpenStreetMap'ten alır; çok yoğun kullanımda kendi karo sağlayıcına geçmek gerekir.
@@ -518,4 +542,4 @@ pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-**296 deneme** geçmelidir (SQLite'ta, PostgreSQL 16'da ve Python 3.12'de geçti). PostgreSQL için: `TEST_DATABASE_URL=postgresql://kullanici:sifre@localhost/bos_bir_veritabani` (veritabanı boş olmalı).
+**508 deneme** geçmelidir (1.21.1: SQLite'ta ve PostgreSQL 16'da geçti). PostgreSQL için: `TEST_DATABASE_URL=postgresql://kullanici:sifre@localhost/bos_bir_veritabani` (veritabanı boş olmalı).
