@@ -61,6 +61,8 @@ ADD_COLUMNS = [
     ("users", "phone_verified_at", "TIMESTAMP WITH TIME ZONE"),
     ("users", "deleted_at", "TIMESTAMP WITH TIME ZONE"),
     ("users", "phone_hash", "VARCHAR(64)"),
+    # 1.26.0: "reklamın yarın bitiyor" hatırlatması
+    ("ad_bookings", "reminded_at", "TIMESTAMP WITH TIME ZONE"),
 ]
 
 # create_all'un yeni kurulumda açtığı dizin adlarıyla aynı adlar (ix_<tablo>_<sütun>)

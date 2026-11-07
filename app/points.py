@@ -40,7 +40,14 @@ from .admin import audit, current_admin
 from .auth import current_user, norm_phone
 from .db import SessionLocal, get_db
 from .limits import Window
-from .models import Admin, DeliveryProof, Handoff, Notice, PointEntry, Reward, RewardClaim, User, now, uid
+from .models import Admin, DeliveryProof, Handoff, Notice, PointEntry, Reward, RewardClaim, RewardPhoto, User, now, uid
+from .logos import sniff
+import base64
+import binascii
+from fastapi.responses import Response
+
+PHOTO_MAX_KB = 300  # ürün fotoğrafı (uygulama 1080 px'e küçültüp yollar)
+PHOTO_SLOTS = 3
 from .standing import is_blacklisted, marks_of, public_standing, standings
 
 POINTS_PER_DELIVERY = 10
@@ -240,9 +247,20 @@ class RewardIn(BaseModel):
 
 
 class ClaimIn(BaseModel):
-    name: str = Field(min_length=1, max_length=120)
-    phone: str = Field(min_length=1, max_length=40)
-    address: str = Field(min_length=1, max_length=600)
+    # 1.25.0 (kullanıcı kararı 6 Kasım 2026: "yalnız barkod", kargo kalktı): ad / telefon / adres İSTENMEZ, gelse de saklanmaz
+    name: str = Field(default="", max_length=120)
+    phone: str = Field(default="", max_length=40)
+    address: str = Field(default="", max_length=600)
+
+
+class RedeemIn(BaseModel):
+    code: str = Field(min_length=3, max_length=40)
+    # True: yalnız göster (hangi ürün, hangi kurye, geçerli mi) — kasada "Ürünü verdim" demeden önce; hiçbir şey değişmez
+    check: bool = False
+
+
+class PhotoIn(BaseModel):
+    data: str = Field(min_length=8, max_length=PHOTO_MAX_KB * 1024 * 4 // 3 + 64)
 
 
 class ShipIn(BaseModel):
@@ -272,7 +290,11 @@ class AdjustIn(BaseModel):
 
 def make_router(daily_max: int = 600, point_tl: float = 0.10, value_min_ratio: float = 0.8, expire_days: float = 365,
                 ship_days: float = 7, answer_days: float = 14, proof_keep_days: float = 30, notice_keep_days: float = 30,
-                gps_max_m: float = 50, gps_acc_max_m: float = 50, value_max_ratio: float = 1.5) -> APIRouter:
+                gps_max_m: float = 50, gps_acc_max_m: float = 50, value_max_ratio: float = 1.5, barcode_days: float = 30) -> APIRouter:
+    """1.25.0 ÖDÜL BARKODU (kullanıcı kararları 6 Kasım 2026): kurye "Bu ürünü al" der → puan düşer, BARKOD oluşur (talep kodu) →
+    kurye işletmede barkodu gösterir → işletme / sponsor Rota'da okutur ("verildi"; tek kullanımlık) → kurye "Teslim aldım" + 1–5 yıldız.
+    Kargo kalktı. Barkod `barcode_days` gün içinde okutulmazsa puan iade edilir. Durumlar: pending = barkod hazır, shipped = okutuldu
+    (verildi), received = teslim alındı (eski adlar korunuyor: yönetim ve eski kayıtlar bozulmasın)."""
     global DAILY_MAX
     DAILY_MAX = daily_max
     r = APIRouter()
@@ -282,7 +304,8 @@ def make_router(daily_max: int = 600, point_tl: float = 0.10, value_min_ratio: f
 
     rules = {
         "perDelivery": POINTS_PER_DELIVERY, "dailyMax": daily_max, "pointTl": point_tl, "tiers": list(TIERS),
-        "valueMinRatio": value_min_ratio, "valueMaxRatio": value_max_ratio, "expireDays": expire_days, "shipDays": ship_days, "answerDays": answer_days,
+        "valueMinRatio": value_min_ratio, "valueMaxRatio": value_max_ratio, "expireDays": expire_days, "shipDays": barcode_days, "answerDays": answer_days,
+        "barcodeDays": barcode_days,
         "gpsMaxM": gps_max_m,
     }
 
@@ -295,8 +318,20 @@ def make_router(daily_max: int = 600, point_tl: float = 0.10, value_min_ratio: f
             return ""
         return str(int(utc(u.logo_at).timestamp())) if u.logo_at else "1"
 
-    def reward_out(rw: Reward, owner: User | None, stats: dict | None = None, st: dict | None = None) -> dict:
+    def photo_map(db: Session, ids: list[str]) -> dict[str, list[str]]:
+        """Ödül başına 3 fotoğraf yuvasının sürümü ('' = boş); katalogda <img> adresine eklenir (önbellek kırılsın)"""
+        out: dict[str, list[str]] = {}
+        if not ids:
+            return out
+        for p in db.query(RewardPhoto.reward_id, RewardPhoto.idx, RewardPhoto.created_at).filter(RewardPhoto.reward_id.in_(ids)).all():
+            row = out.setdefault(p[0], ["", "", ""])
+            if 0 <= p[1] < PHOTO_SLOTS:
+                row[p[1]] = str(ms(p[2]))
+        return out
+
+    def reward_out(rw: Reward, owner: User | None, stats: dict | None = None, st: dict | None = None, photos: list[str] | None = None) -> dict:
         out = {
+            "photos": photos or ["", "", ""],
             "id": rw.id, "name": rw.name, "note": rw.note, "tier": rw.tier, "cost": rw.tier, "valueTl": rw.value_tl,
             "refTl": ref_tl(rw.tier, point_tl), "deliveries": int(math.ceil(rw.tier / POINTS_PER_DELIVERY)),
             "qtyLeft": rw.qty_left, "qtyTotal": rw.qty_total, "endsAt": iso(rw.ends_at), "status": rw.status,
@@ -310,7 +345,7 @@ def make_router(daily_max: int = 600, point_tl: float = 0.10, value_min_ratio: f
 
     def claim_out(c: RewardClaim, viewer: User, ppl: dict[str, User]) -> dict:
         owner_side = viewer.id == c.owner_id
-        show_ship = owner_side and c.status in OPEN_CLAIM
+        show_ship = owner_side and c.status in OPEN_CLAIM and bool(c.ship_address)  # 1.25.0: barkodlu taleplerde adres yok
         courier = ppl.get(c.courier_id)
         return {
             "id": c.id, "code": c.code, "rewardId": c.reward_id, "reward": c.reward_name, "brand": c.brand, "cost": c.cost,
@@ -320,6 +355,7 @@ def make_router(daily_max: int = 600, point_tl: float = 0.10, value_min_ratio: f
             "carrier": c.carrier, "tracking": c.tracking, "stars": c.stars, "note": c.courier_note if owner_side else "",
             "createdAt": iso(c.created_at), "shipDueAt": iso(c.ship_due_at), "shippedAt": iso(c.shipped_at), "onTime": c.on_time,
             "answerDueAt": iso(c.answer_due_at), "receivedAt": iso(c.received_at), "closedAt": iso(c.closed_at),
+            "expiresAt": iso(c.ship_due_at), "givenAt": iso(c.shipped_at),
         }
 
     def scrub(c: RewardClaim) -> None:
@@ -436,7 +472,8 @@ def make_router(daily_max: int = 600, point_tl: float = 0.10, value_min_ratio: f
         # 1.16.0: düzensiz / kara listedeki ödül koyanın ödülleri görünmez; öne çıkan en üstte, güvenilir sonra (aynı grupta eski sıra)
         visible = [x for x in rows if not (ppl.get(x.owner_id) and ppl[x.owner_id].banned) and not sts[x.owner_id]["hidden"]]
         visible.sort(key=lambda x: (0 if sts[x.owner_id]["featured"] else 1 if sts[x.owner_id]["trusted"] else 2))
-        items = [reward_out(x, ppl.get(x.owner_id), st=sts[x.owner_id]) for x in visible]
+        pm = photo_map(db, [x.id for x in visible])
+        items = [reward_out(x, ppl.get(x.owner_id), st=sts[x.owner_id], photos=pm.get(x.id)) for x in visible]
         return {"items": items, "rules": rules}
 
     @r.post("/v1/rewards")
@@ -505,7 +542,8 @@ def make_router(daily_max: int = 600, point_tl: float = 0.10, value_min_ratio: f
         rows = db.query(Reward).filter(Reward.owner_id == user.id, Reward.status == "active").order_by(Reward.created_at.desc()).limit(100).all()
         stats = owner_stats(db, [x.id for x in rows])
         mine = standings(db, {user.id})[user.id]
-        return {"items": [reward_out(x, user, stats.get(x.id), mine) for x in rows], "rules": rules, "standing": public_standing(mine)}
+        pm = photo_map(db, [x.id for x in rows])
+        return {"items": [reward_out(x, user, stats.get(x.id), mine, pm.get(x.id)) for x in rows], "rules": rules, "standing": public_standing(mine)}
 
     @r.delete("/v1/rewards/{rid}")
     def remove_reward(rid: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
@@ -536,21 +574,10 @@ def make_router(daily_max: int = 600, point_tl: float = 0.10, value_min_ratio: f
             raise HTTPException(404, "Bu ödül artık yok")
         if is_blacklisted(db, user.id):
             raise HTTPException(403, "Ödül alma şu an durduruldu. Yardım: Hesabım › Yardım ve Destek.")
-        name, addr = clean_text(b.name, 80), clean_text(b.address, 300)
-        if len(name) < 3 or " " not in name:
-            raise HTTPException(400, "Kargo için ad ve soyadını yaz")
-        if len(addr) < 15:
-            raise HTTPException(400, "Kargo adresini açık yaz (mahalle, sokak, no, ilçe / il)")
-        if _URL_RE.search(addr) or _URL_RE.search(name):
-            raise HTTPException(400, "Adreste e-posta ya da bağlantı olmasın")
-        try:
-            phone = norm_phone(b.phone)
-        except HTTPException:
-            raise HTTPException(400, "Kargo için cep telefonunu yaz (05xx…)")
         if db.query(RewardClaim.id).filter(RewardClaim.courier_id == user.id, RewardClaim.reward_id == rw.id, RewardClaim.status.in_(OPEN_CLAIM)).first() is not None:
             raise HTTPException(409, "Bu ödül için açık bir talebin var")
         if db.query(func.count(RewardClaim.id)).filter(RewardClaim.courier_id == user.id, RewardClaim.status.in_(OPEN_CLAIM)).scalar() >= 3:
-            raise HTTPException(409, "Aynı anda en çok 3 ödül bekleyebilir; gelenleri onayla")
+            raise HTTPException(409, "Aynı anda en çok 3 barkodlu ürünün olabilir; önce birini teslim al")
         expire_points(db, user.id, expire_days)
         bal = balance_of(db, user.id)
         if bal < rw.tier:
@@ -560,8 +587,8 @@ def make_router(daily_max: int = 600, point_tl: float = 0.10, value_min_ratio: f
             raise HTTPException(429, "Bugün çok fazla ödül talebi yapıldı")
         c = RewardClaim(
             id=uid(), code=new_code(db), reward_id=rw.id, owner_id=rw.owner_id, courier_id=user.id, reward_name=rw.name,
-            brand=rw.brand or owner.name, cost=rw.tier, status="pending", ship_name=name, ship_phone=phone, ship_address=addr,
-            ship_due_at=now() + timedelta(days=ship_days),
+            brand=rw.brand or owner.name, cost=rw.tier, status="pending", ship_name="", ship_phone="", ship_address="",
+            ship_due_at=now() + timedelta(days=barcode_days),  # barkodun son günü
         )
         db.add(c)
         db.flush()
@@ -569,8 +596,8 @@ def make_router(daily_max: int = 600, point_tl: float = 0.10, value_min_ratio: f
         rw.qty_left -= 1
         notify(
             db, rw.owner_id, "reward.claimed",
-            f"{user_code(user) or 'Bir kurye'} kuryesi “{rw.name}” ürününüzü almaya hak kazandı (talep {c.code}). "
-            f"{int(ship_days)} gün içinde kargolayın (Ürünlerim › Ödüller › “Hak edenler”).",
+            f"{user_code(user) or 'Bir kurye'} kuryesi “{rw.name}” ürününüzü almaya hak kazandı; barkodu {c.code}. "
+            f"Kurye gelince Ürünlerim › 📷 Barkod okut ile okutun (barkod {int(barcode_days)} gün geçerli).",
             ref=c.id,
         )
         events.log(db, "reward.claim", user.id, c.id, cost=rw.tier)
@@ -592,31 +619,84 @@ def make_router(daily_max: int = 600, point_tl: float = 0.10, value_min_ratio: f
 
     @r.post("/v1/rewards/claims/{cid}/ship")
     def ship(cid: str, b: ShipIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
-        c = claim_for(db, cid, user)
-        if c.owner_id != user.id:
-            raise HTTPException(403, "Kargoyu ödülü koyan bildirir")
-        carrier, tracking = clean_text(b.carrier, 40), clean_text(b.tracking, 40)
-        if len(carrier) < 2 or len(tracking) < 3:
-            raise HTTPException(400, "Kargo firmasını ve takip numarasını yaz")
-        if c.status == "shipped":  # düzeltme
-            c.carrier, c.tracking = carrier, tracking
-            db.commit()
-            return claim_out(c, user, people(db, {c.courier_id}))
+        raise HTTPException(410, "Kargo kalktı: ödül barkodla verilir. Kurye gelince Ürünlerim › 📷 Barkod okut.")
+
+    @r.post("/v1/rewards/redeem")
+    def redeem(b: RedeemIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        """İşletme / sponsor kuryenin barkodunu okutur → "verildi" (TEK KULLANIMLIK). Başkasının ürününün barkodu bulunamaz sayılır."""
+        require_owner_role(user)
+        code = re.sub(r"[^A-Z0-9]", "", (b.code or "").upper())[:12]
+        c = db.query(RewardClaim).filter(RewardClaim.code == code).first() if code else None
+        if c is None or c.owner_id != user.id:
+            raise HTTPException(404, "Bu barkod sizin ürününüze ait değil ya da yanlış okundu")
+        if c.status in ("shipped", "received"):
+            raise HTTPException(409, f"Bu barkod daha önce okutuldu ({tr_day(utc(c.shipped_at))}); ikinci kez ürün verilmez")
         if c.status != "pending":
-            raise HTTPException(409, "Bu talep kargo beklemiyor")
+            raise HTTPException(409, "Bu barkod geçersiz (iptal edildi ya da süresi doldu)")
+        if utc(c.ship_due_at) < now():
+            raise HTTPException(409, "Bu barkodun süresi dolmuş; ürün verilmez (kuryenin puanı iade edilir)")
+        if b.check:  # önce göster: ürün + kurye kodu; "Ürünü verdim" ikinci istekle
+            return claim_out(c, user, people(db, {c.courier_id}))
         c.status = "shipped"
-        c.carrier, c.tracking = carrier, tracking
         c.shipped_at = now()
-        c.on_time = c.shipped_at <= utc(c.ship_due_at)
+        c.on_time = True
+        c.carrier, c.tracking = "Barkod", c.code
         c.answer_due_at = c.shipped_at + timedelta(days=answer_days)
         notify(
-            db, c.courier_id, "reward.shipped",
-            f"“{c.reward_name}” kargoya verildi: {carrier} · takip no {tracking}. Ürün gelince Puanlarım › Ödüllerim'den “Aldım” de.",
+            db, c.courier_id, "reward.given",
+            f"“{c.reward_name}” ({c.brand}) barkodun okutuldu. Ürünü aldıysan Ödül kataloğu › Tanımlanmış ürünlerim'den “Teslim aldım” de "
+            f"ve 5 üzerinden puan ver.",
             ref=c.id,
         )
-        events.log(db, "reward.ship", user.id, c.id)
+        events.log(db, "reward.redeem", user.id, c.id)
         db.commit()
         return claim_out(c, user, people(db, {c.courier_id}))
+
+    # ------------------------------------------------------------------ ürün fotoğrafları (en çok 3)
+    def own_reward(db: Session, rid: str, user: User) -> Reward:
+        rw = db.get(Reward, rid)
+        if rw is None or rw.owner_id != user.id or rw.status != "active":
+            raise HTTPException(404, "Ürün bulunamadı")
+        return rw
+
+    @r.put("/v1/rewards/{rid}/photos/{idx}")
+    def put_photo(rid: str, idx: int, b: PhotoIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        require_owner_role(user)
+        rw = own_reward(db, rid, user)
+        if not 0 <= idx < PHOTO_SLOTS:
+            raise HTTPException(400, "Fotoğraf yeri 1, 2 ya da 3 olmalı")
+        s = re.sub(r"^data:image/[a-z]+;base64,", "", b.data.strip(), count=1, flags=re.IGNORECASE)
+        try:
+            raw = base64.b64decode(s, validate=True)
+        except (binascii.Error, ValueError):
+            raise HTTPException(400, "Fotoğraf okunamadı")
+        if len(raw) > PHOTO_MAX_KB * 1024:
+            raise HTTPException(413, f"Fotoğraf çok büyük (en çok {PHOTO_MAX_KB} KB)")
+        if not sniff(raw):
+            raise HTTPException(415, "Fotoğraf JPEG, PNG ya da WEBP olmalı")
+        db.query(RewardPhoto).filter(RewardPhoto.reward_id == rw.id, RewardPhoto.idx == idx).delete(synchronize_session=False)
+        db.add(RewardPhoto(reward_id=rw.id, idx=idx, data=base64.b64encode(raw).decode("ascii")))
+        events.log(db, "reward.photo", user.id, rw.id, idx=idx)
+        db.commit()
+        return {"photos": photo_map(db, [rw.id]).get(rw.id, ["", "", ""])}
+
+    @r.delete("/v1/rewards/{rid}/photos/{idx}")
+    def del_photo(rid: str, idx: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        rw = own_reward(db, rid, user)
+        db.query(RewardPhoto).filter(RewardPhoto.reward_id == rw.id, RewardPhoto.idx == idx).delete(synchronize_session=False)
+        db.commit()
+        return {"photos": photo_map(db, [rw.id]).get(rw.id, ["", "", ""])}
+
+    @r.get("/v1/rewards/{rid}/photos/{idx}")
+    def get_photo(rid: str, idx: int, db: Session = Depends(get_db)):
+        """Herkese açık (katalogda oturumsuz <img>); kaldırılmış ürünün fotoğrafı verilmez."""
+        rw = db.get(Reward, rid)
+        p = db.query(RewardPhoto).filter(RewardPhoto.reward_id == rid, RewardPhoto.idx == idx).first() if rw is not None and rw.status == "active" else None
+        if p is None:
+            raise HTTPException(404, "Fotoğraf yok")
+        raw = base64.b64decode(p.data)
+        return Response(content=raw, media_type=sniff(raw) or "application/octet-stream",
+                        headers={"Cache-Control": "public, max-age=86400", "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'"})
 
     @r.post("/v1/rewards/claims/{cid}/answer")
     def answer(cid: str, b: AnswerIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
@@ -626,7 +706,9 @@ def make_router(daily_max: int = 600, point_tl: float = 0.10, value_min_ratio: f
             raise HTTPException(403, "Bu soruyu kurye cevaplar")
         note = clean_text(b.note, 200)
         if b.received:
-            if c.status not in ("pending", "shipped", "disputed"):
+            if c.status == "pending":
+                raise HTTPException(409, "Önce işletme barkodunu okutmalı; okutunca “Teslim aldım” açılır.")
+            if c.status not in ("shipped", "disputed"):
                 raise HTTPException(409, "Bu talep kapandı")
             c.stars = b.stars
             c.courier_note = note
@@ -636,33 +718,33 @@ def make_router(daily_max: int = 600, point_tl: float = 0.10, value_min_ratio: f
             events.log(db, "reward.received", user.id, c.id, stars=b.stars or 0)
         else:
             if c.status == "pending":
-                raise HTTPException(409, f"Ürün henüz kargoya verilmedi. {int(ship_days)} gün içinde verilmezse puanın kendiliğinden iade edilir.")
+                raise HTTPException(409, f"Barkod henüz okutulmadı. {int(barcode_days)} gün içinde okutulmazsa puanın kendiliğinden iade edilir.")
             if c.status != "shipped":
                 raise HTTPException(409, "Bu talep kapandı ya da incelemede")
             c.status = "disputed"
             c.courier_note = note
-            notify(db, c.owner_id, "reward.disputed", f"Kurye “{c.reward_name}” ürününün gelmediğini bildirdi (talep {c.code}). Yönetim inceleyecek.", ref=c.id)
+            notify(db, c.owner_id, "reward.disputed", f"Kurye, “{c.reward_name}” barkodu okutulduğu hâlde ürünü almadığını bildirdi (barkod {c.code}). Yönetim inceleyecek.", ref=c.id)
             events.log(db, "reward.dispute", user.id, c.id)
         db.commit()
         return claim_out(c, user, people(db, {c.courier_id}))
 
     @r.post("/v1/rewards/claims/{cid}/cancel")
     def cancel(cid: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
-        """Kargo öncesi iptal: kurye vazgeçer (stok geri döner) ya da ödülü koyan gönderemez (stok bitti). İki durumda da puan iade."""
+        """Barkod okutulmadan iptal: kurye vazgeçer (stok geri döner) ya da ödülü koyan veremez (stok bitti). İki durumda da puan iade."""
         c = claim_for(db, cid, user)
         if c.status != "pending":
-            raise HTTPException(409, "Yalnız kargoya verilmemiş talep iptal edilir")
+            raise HTTPException(409, "Yalnız okutulmamış barkod iptal edilir")
         rw = db.get(Reward, c.reward_id)
         if user.id == c.courier_id:
             close(c, "cancelled", "courier_cancel")
             if rw is not None:
                 rw.qty_left += 1
             refund(db, c, f"İade: {c.reward_name} (vazgeçtin)")
-            notify(db, c.owner_id, "reward.cancelled", f"Kurye “{c.reward_name}” talebinden vazgeçti (talep {c.code}); kargolamanız gerekmiyor.", ref=c.id)
+            notify(db, c.owner_id, "reward.cancelled", f"Kurye “{c.reward_name}” ürününden vazgeçti; {c.code} barkodu artık geçersiz.", ref=c.id)
         else:
             close(c, "cancelled", "owner_cancel")
-            refund(db, c, f"İade: {c.reward_name} (gönderilemedi)")
-            notify(db, c.courier_id, "reward.cancelled", f"“{c.reward_name}” gönderilemedi; {c.cost} puanın iade edildi.", ref=c.id)
+            refund(db, c, f"İade: {c.reward_name} (verilemedi)")
+            notify(db, c.courier_id, "reward.cancelled", f"“{c.reward_name}” verilemedi; barkod iptal edildi ve {c.cost} puanın iade edildi.", ref=c.id)
         events.log(db, "reward.cancel", user.id, c.id)
         db.commit()
         return claim_out(c, user, people(db, {c.courier_id}))
@@ -731,6 +813,39 @@ def make_router(daily_max: int = 600, point_tl: float = 0.10, value_min_ratio: f
         audit(db, request, a, "reward_resolve", "claim", c.id, detail=f"{b.action} {c.code} {clean_text(b.note, 200)}".strip())
         db.commit()
         return admin_claim(c, people(db, {c.owner_id, c.courier_id}))
+
+    # 1.25.0: ürün fotoğrafı denetimi (yüklerken uyarı: "yalnız ürünün fotoğrafı; ilgisiz resim yönetim tarafından silinir")
+    @r.get("/v1/admin/rewards/photos")
+    def admin_photos(limit: int = Query(default=60, ge=1, le=200), before: str = "", a: Admin = Depends(current_admin), db: Session = Depends(get_db)):
+        """Katalogdaki (etkin) ödüllerin fotoğrafları, en yeni önce. Resmin kendisi herkese açık adresten: /v1/rewards/{id}/photos/{yer}"""
+        q = db.query(RewardPhoto.id, RewardPhoto.reward_id, RewardPhoto.idx, RewardPhoto.created_at, func.length(RewardPhoto.data)).join(
+            Reward, Reward.id == RewardPhoto.reward_id).filter(Reward.status == "active")
+        if before:
+            try:  # adres satırında kodlanmamış "+" boşluğa dönüşür: geri çevrilir (admin.parse_before ile aynı)
+                q = q.filter(RewardPhoto.created_at < datetime.fromisoformat(before.strip().replace(" ", "+").replace("Z", "+00:00")))
+            except ValueError:
+                raise HTTPException(400, "Tarih biçimi geçersiz")
+        rows = q.order_by(RewardPhoto.created_at.desc()).limit(limit).all()
+        rws = {x.id: x for x in db.query(Reward).filter(Reward.id.in_({r_[1] for r_ in rows})).all()} if rows else {}
+        ppl = people(db, {x.owner_id for x in rws.values()})
+        out = []
+        for pid, rid, idx, at, n in rows:
+            rw = rws.get(rid)
+            o = ppl.get(rw.owner_id) if rw else None
+            out.append({"id": pid, "rewardId": rid, "idx": idx, "v": str(ms(at)), "at": iso(at), "kb": round((n or 0) * 3 / 4 / 1024, 1),
+                        "reward": rw.name if rw else "", "brand": (rw.brand if rw else "") or (o.name if o else ""),
+                        "owner": {"id": o.id if o else "", "code": user_code(o), "role": rw.owner_role if rw else ""}})
+        return {"items": out}
+
+    @r.delete("/v1/admin/rewards/{rid}/photos/{idx}")
+    def admin_photo_delete(rid: str, idx: int, request: Request, a: Admin = Depends(current_admin), db: Session = Depends(get_db)):
+        rw = db.get(Reward, rid)
+        n = db.query(RewardPhoto).filter(RewardPhoto.reward_id == rid, RewardPhoto.idx == idx).delete(synchronize_session=False)
+        if n and rw is not None:
+            audit(db, request, a, "reward_photo_delete", "reward", rid, detail=f"{rw.name} · fotoğraf {idx + 1}")
+            notify(db, rw.owner_id, "reward.photo", f"“{rw.name}” ürününün {idx + 1}. fotoğrafı yönetim tarafından silindi (yalnız ürünün kendi fotoğrafı yüklenebilir).", ref=rid)
+        db.commit()
+        return {"ok": True}
 
     @r.get("/v1/admin/rewards/scorecards")
     def scorecards(a: Admin = Depends(current_admin), db: Session = Depends(get_db)):
@@ -834,14 +949,14 @@ def make_router(daily_max: int = 600, point_tl: float = 0.10, value_min_ratio: f
         n = {"lateRefund": 0, "autoReceived": 0, "scrubbed": 0, "proofs": 0, "notices": 0, "expired": 0, "claims": 0}
         t = now()
         for c in db.query(RewardClaim).filter(RewardClaim.status == "pending", RewardClaim.ship_due_at < t).all():
-            close(c, "refunded", "late_ship")
-            c.on_time = False
-            refund(db, c, f"İade: {c.reward_name} (kargolanmadı)")
+            # 1.25.0: barkod okutulmadı — kuryenin gelmemesi de olabilir, ödülü koyanın karnesine "geç" yazılmaz
+            close(c, "refunded", "barcode_expired")
+            refund(db, c, f"İade: {c.reward_name} (barkod okutulmadı)")
             rw = db.get(Reward, c.reward_id)
             if rw is not None:
                 rw.qty_left += 1
-            notify(db, c.courier_id, "reward.refunded", f"“{c.reward_name}” {int(ship_days)} gün içinde kargolanmadı; {c.cost} puanın iade edildi.", ref=c.id)
-            notify(db, c.owner_id, "reward.late", f"“{c.reward_name}” talebi (talep {c.code}) {int(ship_days)} gün içinde kargolanmadığı için kapandı; puan kuryeye iade edildi. 90 günde 2 geç kargoda ödülleriniz katalogdan iner.", ref=c.id)
+            notify(db, c.courier_id, "reward.refunded", f"“{c.reward_name}” barkodu {int(barcode_days)} gün içinde okutulmadı; {c.cost} puanın iade edildi.", ref=c.id)
+            notify(db, c.owner_id, "reward.late", f"“{c.reward_name}” barkodu ({c.code}) {int(barcode_days)} gün içinde okutulmadı; talep kapandı, puan kuryeye iade edildi.", ref=c.id)
             n["lateRefund"] += 1
         for c in db.query(RewardClaim).filter(RewardClaim.status == "shipped", RewardClaim.answer_due_at < t).all():
             c.received_at = t

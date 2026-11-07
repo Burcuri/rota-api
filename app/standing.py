@@ -8,6 +8,8 @@ Reklam ile hediye birbirine BAĞLANMAZ (reklam her zaman peşin, coin ile). Spon
 - ÖNE ÇIKAN (yönetim verir, gün sayısıyla) → katalogda en üstte "⭐ Öne çıkan".
 - KARA LİSTE (yönetim koyar; not zorunlu, notu YALNIZ yönetim görür): kurye ödül alamaz; sponsor / işveren ödül koyamaz ve ödülleri
   katalogda görünmez. Kargo bekleyen talepler yine gönderilmeli (kurye korunur). Hesap askıya alma (men) bundan ayrıdır.
+1.25.0 (kullanıcı kararı 6 Kasım 2026 "Yalnız barkod"): kargo kalktı; ürün barkod okutulunca verilir ("kargolandı" = okutuldu, her zaman
+zamanında). Süresinde okutulmayan barkod kuryenin gelmemesidir, ödülü koyanın karnesine yazılmaz. "Gelmedi" yerine "almadım" şikâyeti.
 """
 from datetime import datetime, timedelta, timezone
 
@@ -110,7 +112,7 @@ def standing(s: dict | None, m: UserMark | None, t: datetime | None = None) -> d
     if s["late90"] >= IRREG_LATE:
         reasons.append(f"Son 90 günde {s['late90']} ödül 7 gün içinde kargolanmadı")
     if s["disputed90"] >= IRREG_DISPUTES:
-        reasons.append(f"Son 90 günde {s['disputed90']} “gelmedi” şikâyeti")
+        reasons.append(f"Son 90 günde {s['disputed90']} “almadım” şikâyeti")  # 1.25.0: barkod okutuldu ama kurye ürünü almadı (eskiden "gelmedi")
     if s["starsN90"] >= IRREG_STARS_MIN_N and avg90 is not None and avg90 < IRREG_STARS:
         reasons.append(f"Son 90 günde memnuniyet {avg90:.1f} / 5".replace(".", ","))
     irregular = bool(reasons)

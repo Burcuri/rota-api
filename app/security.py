@@ -35,7 +35,8 @@ from .auth import SECRET, AccountBlocked, DUMMY_HASH, check_pw, current_user, ha
 from .db import get_db
 from .limits import Window, client_ip
 from .models import (
-    AccountDoc, AccountState, AdBooking, AuthCode, AuthThrottle, CoinEntry, CourierProfile, DeliveryProof, Device, DoorReport, Follow,
+    AccountDoc, AccountState, AdBooking, AdSeen, AdStat, AuthCode, AuthThrottle, CoinEntry, CourierProfile, DeliveryProof, Device, DoorReport, Follow,
+    SurveyAnswer,
     FollowPoint, GuideBackup, Handoff, HandoffPush, Job, JobPackage, MapBlock, Notice, Nudge, PointEntry, RelayDelivery, RelayMsg, Review,
     Reward, RewardClaim, Task, User, UserMark, UserPush, now, uid,
 )
@@ -358,20 +359,20 @@ def delete_account(db: Session, u: User) -> dict:
 
     me = u.id
     n: dict[str, int] = {}
-    # --- ödüller: koyduğu ödüller katalogdan iner; kargo bekleyen talepler iptal + kuryeye puan iadesi
+    # --- ödüller: koyduğu ödüller katalogdan iner; okutulmamış barkodlar (1.25.0; eskiden "kargo bekleyen") iptal + kuryeye puan iadesi
     n["rewards"] = db.query(Reward).filter(Reward.owner_id == me, Reward.status == "active").update({Reward.status: "removed"}, synchronize_session=False)
     for c in db.query(RewardClaim).filter(RewardClaim.owner_id == me, RewardClaim.status == "pending").all():
         _scrub_claim(c, "cancelled", "owner_deleted")
         add_entry(db, c.courier_id, c.cost, "refund", ref=c.id, note=f"İade: {c.reward_name} (ödülü koyan hesabını kapattı)")
-        add_notice(db, c.courier_id, "reward.cancelled", f"“{c.reward_name}” gönderilemedi: ödülü koyan hesabını kapattı. {c.cost} puanın iade edildi.", ref=c.id)
-    # kuryenin kendi talepleri: kargo bekleyen iptal (stok geri), hepsinde kargo adresi silinir
+        add_notice(db, c.courier_id, "reward.cancelled", f"“{c.reward_name}” verilemeyecek: ödülü koyan hesabını kapattı. Barkod iptal edildi ve {c.cost} puanın iade edildi.", ref=c.id)
+    # kuryenin kendi talepleri: okutulmamış barkod iptal (stok geri), eski kayıtlarda kargo adresi de silinir
     for c in db.query(RewardClaim).filter(RewardClaim.courier_id == me).all():
         if c.status == "pending":
             _scrub_claim(c, "cancelled", "courier_deleted")
             rw = db.get(Reward, c.reward_id)
             if rw is not None:
                 rw.qty_left += 1
-            add_notice(db, c.owner_id, "reward.cancelled", f"Kurye hesabını kapattı; “{c.reward_name}” talebi (talep {c.code}) iptal edildi, kargolamanız gerekmiyor.", ref=c.id)
+            add_notice(db, c.owner_id, "reward.cancelled", f"Kurye hesabını kapattı; “{c.reward_name}” barkodu ({c.code}) iptal edildi, ürünü vermeniz gerekmiyor.", ref=c.id)
         else:
             _scrub_claim(c)
     # --- takip ve görevler (canlı konum, iz) — kayıtlar tamamen silinir
@@ -419,6 +420,13 @@ def delete_account(db: Session, u: User) -> dict:
     for r in dr:
         r.reporter = "x" + secrets.token_hex(11)
     n["door_reports"] = len(dr)
+    # --- 1.26.0: reklam istatistiği (reklamlarının sayıları + kuryenin "gördü" kayıtları) ve anket yanıtları (arşivde anonim kalır)
+    my_ad_ids = [x for (x,) in db.query(AdBooking.id).filter(AdBooking.owner_id == me).all()]
+    if my_ad_ids:
+        db.query(AdStat).filter(AdStat.ad_id.in_(my_ad_ids)).delete(synchronize_session=False)
+        db.query(AdSeen).filter(AdSeen.ad_id.in_(my_ad_ids)).delete(synchronize_session=False)
+    db.query(AdSeen).filter(AdSeen.user_id == me).delete(synchronize_session=False)
+    n["survey_answers"] = db.query(SurveyAnswer).filter(SurveyAnswer.user_id == me).update({SurveyAnswer.user_id: None}, synchronize_session=False)
     # --- hesabın kendi kayıtları
     for model, col in (
         (UserPush, UserPush.user_id), (RelayDelivery, RelayDelivery.user_id), (Device, Device.user_id), (Notice, Notice.user_id),

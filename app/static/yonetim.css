@@ -110,3 +110,8 @@ p.warn{color:var(--warn);font-weight:700}
 .bar{display:block;height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:5px;min-width:120px}
 .bar>span{display:block;height:100%;background:var(--cyan)}
 .leaflet-container{font:inherit}
+/* 1.22.0: kapı numarası etiketi (haritada 17+ yakınlaşmada) ve kırılım satırındaki denetim işareti */
+.door-lbl-wrap{background:none;border:0}
+.door-lbl{display:inline-block;padding:1px 6px;border-radius:8px;background:#FFD200;color:#0D1B2A;border:1.5px solid #0D1B2A;font-size:12px;font-weight:800;line-height:16px;white-space:nowrap;box-shadow:0 1px 0 #0D1B2A}
+.door-lbl.ok{background:#00E5D4}
+.pill.warn{border-color:var(--warn);color:var(--warn);background:var(--warn-bg);margin-left:6px;font-size:12px;padding:1px 7px}

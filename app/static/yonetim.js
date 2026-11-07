@@ -13,17 +13,19 @@
     user_edit: 'Üye bilgilerini düzenledi', user_ban: 'Üyeyi uygulamadan men etti', user_unban: 'Üyenin menini kaldırdı', user_password: 'Üyeye yeni şifre verdi', user_logout: 'Üyenin oturumlarını kapattı',
     review_hide: 'Değerlendirmeyi gizledi', review_unhide: 'Değerlendirmeyi yeniden gösterdi', review_delete: 'Değerlendirmeyi kalıcı sildi',
     follow_view: 'Takip kaydının konum izini açtı',
-    logo_delete: 'İşletme logosunu sildi',
+    logo_delete: 'İşletme logosunu sildi', reward_photo_delete: 'Ödül ürününün fotoğrafını sildi',
     reward_resolve: 'Ödül talebini sonuçlandırdı', points_adjust: 'Puan düzeltmesi yaptı',
     blacklist_add: 'Kara listeye aldı', blacklist_note: 'Kara liste notunu güncelledi', blacklist_remove: 'Kara listeden çıkardı', user_note: 'Yönetim notu yazdı',
     sponsor_feature: 'Ödül koyanı öne çıkardı', sponsor_pardon: 'Ödül koyanı affetti (görünürlük)',
     coins_adjust: 'Coin düzeltmesi yaptı', ad_remove: 'Harita reklamını kaldırdı',
     code_reveal: 'Doğrulama kodunu gösterdi', user_unlock: 'Üyenin giriş kilidini açtı',
     door_delete: 'Kapı noktasını sildi', door_export: 'Kapı haritasını CSV olarak indirdi',
+    survey_create: 'Anket açtı', survey_archive: 'Anketi arşive aldı', survey_restore: 'Anketi yeniden açtı', survey_export: 'Anket yanıtlarını CSV olarak indirdi',
+    backup_download: 'Veritabanı yedeği indirdi',
   };
   // 1.20.0: doğrulama kodları (şifremi unuttum, e-posta / telefon doğrulama, telefon değiştirme)
   const KSTATUS = { live: 'Geçerli', used: 'Kullanıldı / yenisi istendi', expired: 'Süresi doldu' };
-  const TARGET = { user: 'üye', admin: 'yönetici', review: 'değerlendirme', follow: 'takip', claim: 'ödül talebi', ad: 'reklam', door: 'kapı noktası' };
+  const TARGET = { user: 'üye', admin: 'yönetici', review: 'değerlendirme', follow: 'takip', claim: 'ödül talebi', ad: 'reklam', door: 'kapı noktası', survey: 'anket', backup: 'yedek' };
   // 1.21.0: Kapı haritası (ortak kapı katmanının önizlemesi)
   const KST = { verified: 'Doğrulanmış', pending: 'Bekliyor', disputed: 'Tartışmalı', hidden: 'Gizli' };
   const KCOL = { verified: '#00E5D4', pending: '#FFD200', disputed: '#FF4DA6', hidden: '#1B263B' };
@@ -41,7 +43,7 @@
   const ev = { kind: '', userId: '' };
   const rv = { source: '', stars: '', hidden: '', q: '', subject: '' };
   const fl = { status: '', userId: '' };
-  const km = { p: '', d: '', n: '', s: '', k: '', status: '', dName: '', nName: '', sName: '', map: null };
+  const km = { p: '', d: '', n: '', s: '', k: '', status: '', pName: '', dName: '', nName: '', sName: '', map: null };
 
   // ------------------------------------------------------------------ yardımcılar
   function add(n, c) {
@@ -229,7 +231,7 @@
   }
 
   // ------------------------------------------------------------------ uygulama kabuğu
-  const TABS = [['ozet', 'Özet'], ['uyeler', 'Üyeler'], ['kodlar', 'Kodlar'], ['etkinlik', 'Etkinlik'], ['takipler', 'Takipler'], ['kapilar', 'Kapı haritası'], ['yorumlar', 'Yorumlar'], ['oduller', 'Ödüller'], ['karaliste', 'Kara liste'], ['reklamlar', 'Reklamlar'], ['logolar', 'Logolar'], ['hatalar', 'Hatalar'], ['hesap', 'Hesabım']];
+  const TABS = [['ozet', 'Özet'], ['uyeler', 'Üyeler'], ['kodlar', 'Kodlar'], ['etkinlik', 'Etkinlik'], ['takipler', 'Takipler'], ['kapilar', 'Kapı haritası'], ['yorumlar', 'Yorumlar'], ['oduller', 'Ödüller'], ['karaliste', 'Kara liste'], ['reklamlar', 'Reklamlar'], ['anketler', 'Anketler'], ['logolar', 'Logolar ve fotoğraflar'], ['hatalar', 'Hatalar'], ['hesap', 'Hesabım']];
 
   function showApp() {
     document.getElementById('who').hidden = false;
@@ -252,7 +254,7 @@
     Array.prototype.forEach.call(document.querySelectorAll('.tab'), (b) => b.setAttribute('aria-selected', b.getAttribute('data-tab') === tab ? 'true' : 'false'));
     clear(ctx.content);
     if (km.map) { try { km.map.remove(); } catch (e) { /* */ } km.map = null; }
-    ({ ozet: tabOzet, kapilar: tabKapi, uyeler: tabUyeler, kodlar: tabKodlar, etkinlik: tabEtkinlik, takipler: tabTakipler, yorumlar: tabYorumlar, oduller: tabOduller, karaliste: tabKaraliste, reklamlar: tabReklamlar, logolar: tabLogolar, hatalar: tabHatalar, hesap: tabHesap })[tab]();
+    ({ ozet: tabOzet, kapilar: tabKapi, uyeler: tabUyeler, kodlar: tabKodlar, etkinlik: tabEtkinlik, takipler: tabTakipler, yorumlar: tabYorumlar, oduller: tabOduller, karaliste: tabKaraliste, reklamlar: tabReklamlar, anketler: tabAnketler, logolar: tabLogolar, hatalar: tabHatalar, hesap: tabHesap })[tab]();
   }
 
   function loading(node) { clear(node); node.appendChild(h('p', { class: 'muted', text: 'Yükleniyor…' })); }
@@ -281,7 +283,65 @@
         stat(s.reviewsHidden, 'Gizlenmiş değerlendirme', () => { Object.assign(rv, { hidden: '1' }); go('yorumlar'); }),
         stat(s.admins, 'Yönetici')));
       c.appendChild(h('p', { class: 'small muted', text: 'Sunucudaki kayıtların hepsine buradan bakılır. Mesaj içerikleri, adres listeleri ve alıcı bilgileri telefonlarda durduğu, sunucuda tutulmadığı için burada yoktur.' }));
+      c.appendChild(backupBox());
     }).catch((er) => failed(c, er));
+  }
+
+  // ------------------------------------------------------------------ 1.26.0: veritabanı yedeği (şifreli; gece GitHub Actions alır)
+  function kb(n) { return n >= 1048576 ? (n / 1048576).toFixed(1).replace('.', ',') + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB'; }
+  function backupBox() {
+    const box = h('div', { class: 'box', id: 'yedek' }, h('h3', { text: 'Veritabanı yedeği' }), h('p', { class: 'muted small', text: 'Yükleniyor…' }));
+    const msg = h('div', { class: 'msg', role: 'status' });
+    function download(btn) {
+      btn.disabled = true;
+      say(msg, 'Yedek hazırlanıyor… (büyük veritabanında bir dakika sürebilir)');
+      fetch('/v1/admin/backups/download', { method: 'POST', headers: { Authorization: 'Bearer ' + token }, cache: 'no-store' })
+        .then((r) => {
+          if (!r.ok) return r.json().then((j) => { throw new Error((j && j.detail) || 'İndirilemedi (' + r.status + ')'); }, () => { throw new Error('İndirilemedi (' + r.status + ')'); });
+          const m = /filename="([^"]+)"/.exec(r.headers.get('content-disposition') || '');
+          return r.blob().then((b) => [b, m ? m[1] : 'rota-yedek.rotayedek']);
+        })
+        .then(([b, name]) => {
+          const u = URL.createObjectURL(b);
+          const a = h('a', { href: u, download: name, hidden: true });
+          document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(() => URL.revokeObjectURL(u), 5000);
+          say(msg, 'İndirildi: ' + name + ' (' + kb(b.size) + '). Dosya şifreli; açmak için Render’daki BACKUP_KEY gerekir.', 'ok');
+          load();
+        })
+        .catch((er) => say(msg, er.message, 'bad'))
+        .then(() => { btn.disabled = false; });
+    }
+    function load() {
+      api('GET', '/v1/admin/backups').then((r) => {
+        clear(box);
+        box.appendChild(h('h3', { text: 'Veritabanı yedeği' }));
+        if (!r.enabled) {
+          box.classList.add('warn');
+          box.appendChild(h('p', { class: 'small warn', text: 'Yedek KAPALI: Render › rota-sunucu › Environment › Add Environment Variable › Key: BACKUP_KEY, Value: “Generate” ile üretilen değer → Save. Aynı değeri GitHub › rota-api › Settings › Secrets and variables › Actions › New repository secret › BACKUP_KEY olarak da ekleyin (her gece yedek alınır).' }));
+          return;
+        }
+        box.classList.remove('warn');
+        const sched = r.items.filter((x) => x.by === 'schedule');
+        const last = sched[0];
+        const ageH = last ? (Date.now() - new Date(last.at).getTime()) / 3600000 : null;
+        if (!last) box.appendChild(h('p', { class: 'small warn', text: 'Henüz gece yedeği gelmedi. GitHub › rota-api › Actions › “Veritabanı yedeği” › Run workflow ile deneyin.' }));
+        else if (ageH > 36) box.appendChild(h('p', { class: 'small warn', text: 'Son gece yedeği ' + Math.floor(ageH / 24) + ' gün önce. GitHub › Actions’ta işin hatasına bakın.' }));
+        else box.appendChild(h('p', { class: 'small', text: 'Son gece yedeği: ' + when(last.at) + ' · ' + kb(last.size) + ' · ' + last.tables + ' tablo, ' + last.rows + ' satır. Dosyalar GitHub › Actions › Veritabanı yedeği › Artifacts’ta 30 gün durur.' }));
+        const btn = h('button', { type: 'button', class: 'btn small', text: 'Şimdi yedek indir' });
+        btn.addEventListener('click', () => download(btn));
+        box.appendChild(h('div', { class: 'row' }, btn));
+        if (r.items.length) {
+          const ul = h('ul', { class: 'small muted' });
+          r.items.slice(0, 7).forEach((x) => ul.appendChild(h('li', { text: when(x.at) + ' · ' + (x.by === 'admin' ? 'yönetim indirdi' : 'gece yedeği') + ' · ' + kb(x.size) + ' · ' + x.rows + ' satır' })));
+          box.appendChild(ul);
+        }
+        box.appendChild(h('p', { class: 'small muted', text: 'Geri yükleme (gerekirse): boş bir veritabanı açılır, sunucu klasöründe BACKUP_KEY ve yeni DATABASE_URL ile “python -m app.restore dosya.rotayedek” çalıştırılır.' }));
+        box.appendChild(msg);
+      }).catch((er) => { clear(box); box.appendChild(h('h3', { text: 'Veritabanı yedeği' })); box.appendChild(h('p', { class: 'msg bad', text: er.message })); });
+    }
+    load();
+    return box;
   }
 
   // ------------------------------------------------------------------ Üyeler
@@ -391,6 +451,8 @@
     if (d.standing) c.appendChild(ownerBox({ id: d.id, name: d.name, code: d.userNo ? (PFX[d.role] || 'ISV') + '-' + d.userNo : '', role: d.role, standing: d.standing, mark: d.mark || {}, rewards: null }, () => openUser(d.id), true));
     // --- 1.17.0: Rota coin (sunucudaki defter) ve harita reklamları
     c.appendChild(coinBox(d.id));
+    // --- 1.25.0: kuryenin puanı (destek ve ödül kataloğunu denemek için düzeltme)
+    if (d.role === 'courier') c.appendChild(pointsBox(d.id));
 
     // --- 1.20.0: giriş ve güvenlik (doğrulama, giriş kilidi, kişiye ulaşmayan kodlar)
     c.appendChild(securityBox(d.id));
@@ -428,7 +490,7 @@
     // --- rıza, ilanlar, cihazlar
     const cs = d.consent;
     c.appendChild(h('div', { class: 'box' }, h('h3', { text: 'İzinler ve kayıt' }),
-      cs ? kv([['Metin sürümü', cs.version], ['Sesle yazma', cs.voice ? 'açık' : 'kapalı'], ['Adres okuma (OCR)', cs.ocr ? 'açık' : 'kapalı'], ['Grup konumu', cs.grupKonum ? 'açık' : 'kapalı'], ['Ortak kapı haritası', cs.kapi ? 'açık' : 'kapalı'], ['Kullanım koşulları', cs.sozlesmeV ? 'sürüm ' + cs.sozlesmeV : 'onaylanmamış'], ['Son kayıt', when(cs.recordedAt)]]) : h('p', { class: 'muted', text: 'Henüz rıza kaydı yok.' }),
+      cs ? kv([['Metin sürümü', cs.version], ['Sesle yazma', cs.voice ? 'açık' : 'kapalı'], ['Adres okuma (OCR)', cs.ocr ? 'açık' : 'kapalı'], ['Grup konumu (yalnız kurye; işletme konumu her zaman görünür)', cs.grupKonum ? 'açık' : 'kapalı'], ['Ortak kapı haritası', cs.kapi ? 'açık' : 'kapalı'], ['Kullanım koşulları', cs.sozlesmeV ? 'sürüm ' + cs.sozlesmeV : 'onaylanmamış'], ['Son kayıt', when(cs.recordedAt)]]) : h('p', { class: 'muted', text: 'Henüz rıza kaydı yok.' }),
       kv([['Kayıt tarihi', when(d.createdAt)], ['Son giriş', when(d.lastLoginAt)], ['Teslim bağlantısı sayısı', d.handoffs], ['Cihazlar', d.devices.length ? d.devices.map((x) => x.platform + ' (' + when(x.lastSeen) + ')').join('; ') : '—']])));
     if (d.jobs.length) {
       c.appendChild(h('div', { class: 'box' }, h('h3', { text: 'İlanları' }), ...d.jobs.map((j) => h('div', { class: 'ev' }, h('span', { class: 't', text: when(j.at) }), h('span', null, j.title + ' · ' + j.count + ' adres · ', h('span', { class: 'pill', text: j.status }))))));
@@ -673,16 +735,16 @@
   }
 
   // ------------------------------------------------------------------ Ödüller ve puan (1.15.0)
-  const CSTATUS = { pending: 'Kargo bekliyor', shipped: 'Kargoda', received: 'Teslim alındı', disputed: 'Gelmedi (şikâyet)', refunded: 'Puan iade', cancelled: 'İptal' };
+  const CSTATUS = { pending: 'Barkod hazır (okutulmadı)', shipped: 'Okutuldu (verildi)', received: 'Teslim alındı', disputed: 'Almadım (şikâyet)', refunded: 'Puan iade', cancelled: 'İptal' };
   const CREASON = {
-    courier_received: 'kurye aldım dedi', auto_received: '14 gün cevap yok: alındı sayıldı', late_ship: '7 günde kargolanmadı',
+    courier_received: 'kurye aldım dedi', auto_received: '14 gün cevap yok: alındı sayıldı', late_ship: '7 günde kargolanmadı (eski)', barcode_expired: 'barkod süresinde okutulmadı',
     owner_cancel: 'ödülü koyan iptal etti', courier_cancel: 'kurye vazgeçti', admin_refund: 'yönetim iade etti', admin_received: 'yönetim alındı saydı',
   };
   function tabOduller() {
     const c = ctx.content;
     const sel = h('select', { 'aria-label': 'Talepler' },
       h('option', { value: 'open', text: 'Açık talepler', selected: true }), h('option', { value: 'disputed', text: 'Şikâyetli (gelmedi)' }),
-      h('option', { value: 'late', text: 'Geciken kargo' }), h('option', { value: 'all', text: 'Hepsi' }));
+      h('option', { value: 'late', text: 'Süresi dolmak üzere' }), h('option', { value: 'all', text: 'Hepsi' }));
     const list = h('div'); const info = h('div', { class: 'msg', role: 'status' });
     const cards = h('div'); const watch = h('div');
     const view = h('select', { 'aria-label': 'Ödül koyanlar' }, ...[['all', 'Hepsi'], ['irregular', 'Düzensiz'], ['hidden', 'Katalogda gizli'], ['trusted', 'Güvenilir'], ['featured', 'Öne çıkan'], ['blacklisted', 'Kara listede']]
@@ -746,7 +808,7 @@
     sel.addEventListener('change', load);
     view.addEventListener('change', loadCards);
     c.appendChild(h('h2', { text: 'Ödül talepleri' }));
-    c.appendChild(h('p', { class: 'small muted', text: 'Kurye puanla ödül alır → puan bloke, ödülü koyana bildirim → 7 gün içinde kargo (yoksa puan iade) → kurye "aldım" (yıldızla) ya da "gelmedi" (buraya düşer). Kargodan sonra 14 gün cevap yoksa alındı sayılır. Kargo adresi yönetime gösterilmez; talep kapanınca silinir.' }));
+    c.appendChild(h('p', { class: 'small muted', text: '1.25.0: kargo yok, BARKOD var. Kurye puanla "Bu ürünü al" der → puan bloke, barkod oluşur, ödülü koyana bildirim → işletme barkodu Rota\'da okutur (tek kullanımlık; 30 günde okutulmazsa puan iade) → kurye "Teslim aldım" (yıldızla) ya da "gelmedi" (buraya düşer). Kargodan sonra 14 gün cevap yoksa alındı sayılır. Kargo adresi yönetime gösterilmez; talep kapanınca silinir.' }));
     c.appendChild(h('div', { class: 'row' }, sel));
     c.appendChild(info); c.appendChild(list);
     c.appendChild(h('h2', { text: 'Sponsor / işyeri karnesi ve görünürlük' }));
@@ -816,7 +878,7 @@
     const uid = encodeURIComponent(id);
     const box = h('div', { class: 'box' + (m.blacklisted ? ' bad' : ''), 'data-blacklist': id },
       h('h3', { text: m.blacklisted ? 'Kara listede' : 'Kara liste ve yönetim notu' }),
-      h('p', { class: 'small muted', text: 'Kara listedeki kurye ödül alamaz; sponsor / işyeri ödül koyamaz ve ödülleri katalogda görünmez (kargo bekleyen talepleri yine gönderir). Not yalnız yönetime görünür. Uygulamadan men etmek ayrıdır.' }),
+      h('p', { class: 'small muted', text: 'Kara listedeki kurye ödül alamaz; sponsor / işyeri ödül koyamaz ve ödülleri katalogda görünmez (okutulmamış barkodları yine okutup ürünü verir). Not yalnız yönetime görünür. Uygulamadan men etmek ayrıdır.' }),
       m.blacklisted ? kv([['Listeye alan', m.listedBy], ['Ne zaman', when(m.listedAt)]]) : null,
       h('label', { class: 'f' }, 'Not', note),
       m.noteAt ? h('div', { class: 'muted small', text: 'Son not: ' + (m.noteBy || '—') + ' · ' + when(m.noteAt) }) : null);
@@ -902,6 +964,32 @@
     load();
     return box;
   }
+  function pointsBox(uid) {
+    const box = h('div', { class: 'box', 'data-points': uid }, h('h3', { text: 'Kurye puanı' }));
+    const body = h('div'); box.appendChild(body); loading(body);
+    const delta = h('input', { type: 'number', step: '10', placeholder: '+1000 / -60', 'aria-label': 'Puan düzeltmesi' });
+    const note = h('input', { type: 'text', maxlength: '120', placeholder: 'Neden (kuryeye bildirim gider)', class: 'grow', 'aria-label': 'Puan düzeltme nedeni', caps: 'first' });
+    const msg = h('div', { class: 'msg', role: 'status' });
+    function load() {
+      api('GET', '/v1/admin/users/' + encodeURIComponent(uid) + '/points').then((r) => {
+        clear(body);
+        body.appendChild(kv([['Puan', r.balance + ' (barkodlu üründe bloke ' + r.held + ')'], ['Doğrulanmış teslim', String(r.verified)]]));
+        if (r.history.length) {
+          body.appendChild(h('details', null, h('summary', { text: 'Son puan hareketleri (' + r.history.length + ')' }),
+            ...r.history.map((x) => h('div', { class: 'ev' }, h('span', { class: 't', text: when(x.at) }), h('span', { text: (x.delta > 0 ? '+' : '') + x.delta + ' · ' + x.note })))));
+        }
+      }).catch((er) => failed(body, er));
+    }
+    box.appendChild(h('div', { class: 'row' }, delta, note,
+      h('button', { type: 'button', class: 'btn small', text: 'Puan düzelt', onclick: () => {
+        api('POST', '/v1/admin/users/' + encodeURIComponent(uid) + '/points', { delta: parseInt(delta.value || '0', 10) || 0, note: note.value })
+          .then((r) => { say(msg, 'Yeni puan: ' + r.balance + '. Kuryeye bildirim gitti.', 'ok'); delta.value = ''; note.value = ''; load(); }).catch((er) => say(msg, er.message, 'bad'));
+      } })));
+    box.appendChild(h('p', { class: 'small muted', text: 'Puan doğrulanmış teslimden gelir (10 puan). Düzeltme işlem günlüğüne yazılır; ödül kataloğunu denemek için de kullanılabilir (1.000 puan ≈ 100 TL’lik ürün).' }));
+    box.appendChild(msg);
+    load();
+    return box;
+  }
   function tabReklamlar() {
     const c = ctx.content;
     const view = h('select', { 'aria-label': 'Reklamlar' }, h('option', { value: 'active', text: 'Yayında olanlar' }), h('option', { value: 'all', text: 'Son 90 gün (kaldırılanlar dahil)' }));
@@ -912,7 +1000,8 @@
       return h('div', { class: 'box' + (x.removed ? ' bad' : ''), 'data-ad': x.id },
         h('h3', null, '📣 ' + x.label + ' ', x.removed ? h('span', { class: 'pill bad', text: x.removedBy === 'admin' ? 'yönetim kaldırdı' : 'sahibi kaldırdı' }) : h('span', { class: 'pill' + (x.active ? ' ok' : ''), text: x.active ? 'yayında' : 'süresi doldu' })),
         h('div', { class: 'muted small', text: [o.shown && o.shown !== o.name ? o.shown + ' (' + (o.name || '—') + ')' : (o.name || '(adsız)'), o.code, ROLE[o.role] || o.role, o.banned ? 'askıda' : ''].filter(Boolean).join(' · ') }),
-        kv([['Nokta', adWhere(x)], ['Süre', x.days + ' gün · ' + dateOnly(new Date(x.at).toISOString()) + ' → ' + dateOnly(new Date(x.endsAt).toISOString())], ['Bedel', x.cost + ' coin' + (x.package ? ' (paket ' + x.package + ')' : '')]]),
+        kv([['Tür', x.kind === 'tabela' ? '🪧 Tabela (aylık)' : 'Harita reklamı'], ['Nokta', adWhere(x)], ['Süre', x.days + ' gün · ' + dateOnly(new Date(x.at).toISOString()) + ' → ' + dateOnly(new Date(x.endsAt).toISOString())], ['Bedel', x.cost + ' coin' + (x.package && x.package !== 'tabela' ? ' (paket ' + x.package + ')' : '')],
+          ['Görülme', x.stats ? x.stats.viewers + ' kurye gördü · ' + x.stats.shows + ' kez göründü · ' + x.stats.taps + ' dokunma' : '—']]),
         h('div', { class: 'row' },
           x.removed ? null : confirmBtn('Reklamı kaldır', 'danger', 'Reklam kuryelerin haritasından kalksın mı? (Sahibine bildirim gider.)', () => api('DELETE', '/v1/admin/ads/' + encodeURIComponent(x.id)).then(() => load()).catch((er) => say(msg, er.message, 'bad'))),
           h('button', { type: 'button', class: 'btn small ghost', text: 'Üyeyi aç', onclick: () => openUser(o.id) })),
@@ -930,6 +1019,81 @@
     view.addEventListener('change', load);
     c.appendChild(h('h2', { text: 'Harita reklamları' }));
     c.appendChild(h('p', { class: 'small muted', text: 'Sponsor ve işyerlerinin Rota coin ile verdiği harita reklamları (reklam deposu sunucuda). Kuryeler, rotalarındaki aktif reklamları haritada görür. Uygunsuz reklamı kaldırın: reklam haritadan iner, sahibine bildirim gider; coin iadesi gerekiyorsa Üyeler › üye › “Coin düzelt” ile yapılır.' }));
+    c.appendChild(h('div', { class: 'row' }, view));
+    c.appendChild(list);
+    load();
+  }
+
+  // ------------------------------------------------------------------ 1.26.0: Anketler (sunucuda; kullanıcı kararı 7 Kasım 2026)
+  const SKIND = { ucret: 'Teslimat ücreti (₺)', saat: 'Saat ücreti (₺/saat)', sayi: 'Sayı' };
+  const sv = { status: 'all' };
+  function tabAnketler() {
+    const c = ctx.content;
+    const view = h('select', { 'aria-label': 'Anket durumu' }, ...[['all', 'Hepsi'], ['active', 'Açık olanlar'], ['archived', 'Arşivdekiler']].map(([v, t]) => h('option', { value: v, text: t, selected: sv.status === v })));
+    const list = h('div');
+    // yeni anket
+    const q = h('input', { type: 'text', maxlength: '200', placeholder: 'Soru (ör. Bu bölgede paket başı ücret ne olmalı?)', class: 'grow', caps: 'first', 'aria-label': 'Soru' });
+    const kind = h('select', { 'aria-label': 'Yanıt türü' }, ...Object.keys(SKIND).map((k) => h('option', { value: k, text: SKIND[k] })));
+    const unit = h('input', { type: 'text', maxlength: '16', placeholder: 'Birim (boş: türün birimi)', 'aria-label': 'Birim', style: 'max-width:12em' });
+    const mn = h('input', { type: 'number', min: '0', value: '1', 'aria-label': 'En küçük yanıt', style: 'max-width:8em' });
+    const mx = h('input', { type: 'number', min: '1', value: '99999', 'aria-label': 'En büyük yanıt', style: 'max-width:8em' });
+    const fmsg = h('div', { class: 'msg', role: 'status' });
+    const form = h('form', { class: 'box', onsubmit: (e) => {
+      e.preventDefault();
+      api('POST', '/v1/admin/surveys', { q: q.value.trim(), kind: kind.value, unit: unit.value.trim() || null, min: Number(mn.value), max: Number(mx.value) })
+        .then(() => { q.value = ''; unit.value = ''; say(fmsg, 'Anket açıldı: kuryeler Hesabım › Anketler’de görür.', 'ok'); load(); })
+        .catch((er) => say(fmsg, er.message, 'bad'));
+    } },
+      h('h3', { text: 'Yeni anket' }),
+      h('div', { class: 'row' }, q),
+      h('div', { class: 'row' }, kind, unit, h('span', { class: 'small muted', text: 'Yanıt aralığı' }), mn, h('span', { text: '–' }), mx,
+        h('button', { type: 'submit', class: 'btn small', text: 'Anketi aç' })), fmsg);
+    function csv(x, btn, msg) {
+      btn.disabled = true;
+      fetch('/v1/admin/surveys/' + encodeURIComponent(x.id) + '/export', { headers: { Authorization: 'Bearer ' + token }, cache: 'no-store' })
+        .then((r) => { if (!r.ok) throw new Error('İndirilemedi (' + r.status + ')'); const m = /filename="([^"]+)"/.exec(r.headers.get('content-disposition') || ''); return r.blob().then((b) => [b, m ? m[1] : 'rota-anket.csv']); })
+        .then(([b, name]) => {
+          const u = URL.createObjectURL(b); const a = h('a', { href: u, download: name, hidden: true });
+          document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 5000);
+          say(msg, 'İndirildi: ' + name, 'ok');
+        })
+        .catch((er) => say(msg, er.message, 'bad')).then(() => { btn.disabled = false; });
+    }
+    function card(x) {
+      const msg = h('div', { class: 'msg', role: 'status' });
+      const arch = x.status === 'archived';
+      const csvBtn = h('button', { type: 'button', class: 'btn small ghost', text: 'Yanıtları CSV indir' });
+      csvBtn.addEventListener('click', () => csv(x, csvBtn, msg));
+      const areas = x.areas.length ? h('ul', { class: 'small' }, ...x.areas.map((a) => h('li', { text: [a.district || '(bölge yok)', a.province].filter(Boolean).join(', ') + ' · ' + a.n + ' yanıt · ortalama ' + (a.avg == null ? '—' : a.avg + ' ' + x.unit) }))) : null;
+      return h('div', { class: 'box' + (arch ? ' muted' : ''), 'data-survey': x.id },
+        h('h3', null, '🗳 ' + x.q + ' ', h('span', { class: 'pill' + (arch ? '' : ' ok'), text: arch ? 'arşivde' : 'açık' })),
+        kv([['Tür', (SKIND[x.kind] || x.kind) + (x.unit ? ' · birim: ' + x.unit : '')], ['Yanıt aralığı', x.min + ' – ' + x.max],
+          ['Yanıt', x.n + (x.n ? ' · ortalama ' + x.avg + ' ' + x.unit : '') + (x.n && x.n < ctxMin() ? ' (uygulamada ' + ctxMin() + ' yanıttan önce ortalama görünmez)' : '')],
+          ['Açılış', when(new Date(x.at).toISOString()) + (x.by ? ' · ' + x.by : '')], ['Son yanıt', x.lastAnswerAt ? when(new Date(x.lastAnswerAt).toISOString()) : '—'],
+          arch ? ['Arşive alındı', when(new Date(x.archivedAt).toISOString())] : null].filter(Boolean)),
+        areas,
+        h('div', { class: 'row' },
+          arch ? h('button', { type: 'button', class: 'btn small ghost', text: 'Yeniden aç', onclick: () => api('POST', '/v1/admin/surveys/' + encodeURIComponent(x.id) + '/restore').then(load).catch((er) => say(msg, er.message, 'bad')) })
+            : confirmBtn('Arşive al', 'ghost', 'Anket uygulamadan kalksın mı? (Yanıtlar silinmez, arşivde durur.)', () => api('POST', '/v1/admin/surveys/' + encodeURIComponent(x.id) + '/archive').then(load).catch((er) => say(msg, er.message, 'bad'))),
+          csvBtn),
+        msg);
+    }
+    let minShow = 3;
+    function ctxMin() { return minShow; }
+    function load() {
+      sv.status = view.value;
+      loading(list);
+      api('GET', '/v1/admin/surveys?' + qs({ status: view.value })).then((r) => {
+        minShow = r.minShow || 3;
+        clear(list);
+        if (!r.items.length) { list.appendChild(h('p', { class: 'muted', text: 'Anket yok.' })); return; }
+        r.items.forEach((x) => list.appendChild(card(x)));
+      }).catch((er) => failed(list, er));
+    }
+    view.addEventListener('change', load);
+    c.appendChild(h('h2', { text: 'Anketler' }));
+    c.appendChild(h('p', { class: 'small muted', text: 'Soruyu yönetim yazar, kuryeler uygulamada (Hesabım › Anketler) yanıtlar. İşletmeler ve kuryeler yalnız ORTALAMAYI görür (en az 3 yanıt; işletme kendi ilçesininkini). Kimin ne yazdığı hiçbir yerde gösterilmez; CSV’de de yalnız gün, il, ilçe ve yanıt var. Kapanan anket silinmez: arşivde yanıtlarıyla durur, yeniden açılabilir.' }));
+    c.appendChild(form);
     c.appendChild(h('div', { class: 'row' }, view));
     c.appendChild(list);
     load();
@@ -985,10 +1149,12 @@
     load();
     return box;
   }
-  // ------------------------------------------------------------------ Kapı haritası (1.21.0)
-  // Kuryelerin teslimatlarıyla dolan ortak kapı katmanı: il › ilçe › mahalle › sokak kırılımı, haritada noktalar (doğrulanmış turkuaz,
-  // bekleyen sarı, tartışmalı pembe, gizli lacivert), nokta ayrıntısı, yanlış noktayı silme, CSV. Kişi bilgisi yok.
-  function kmLevelName() { return km.s ? 'sokak' : km.n ? 'mahalle' : km.d ? 'ilçe' : 'Türkiye'; }
+  // ------------------------------------------------------------------ Kapı haritası (1.21.0; 1.22.0: il düzeyi, işaretler, kapı no etiketi)
+  // Kuryelerin teslimatlarıyla dolan ortak kapı katmanı: Türkiye › il › ilçe › mahalle › sokak kırılımı, haritada noktalar (doğrulanmış
+  // turkuaz, bekleyen sarı, tartışmalı pembe, gizli lacivert; yakınlaşınca kapı numaraları yazılır), nokta ayrıntısı, yanlış noktayı silme,
+  // CSV. Resmi listede olmayan il / ilçe / mahalle ve ilinden çok uzak konum işaretlenir. Kişi bilgisi yok.
+  const KM_RESET = { p: '', d: '', n: '', s: '', k: '', pName: '', dName: '', nName: '', sName: '' };
+  function kmLevelName() { return km.s ? 'sokak' : km.n ? 'mahalle' : km.d ? 'ilçe' : km.p ? 'il' : 'Türkiye'; }
   function kmGo(o) { Object.assign(km, o); tabKapi(); }
 
   function tabKapi() {
@@ -1006,10 +1172,11 @@
         stat(t.total, 'Kapı noktası', ''), stat(t.verified, 'Doğrulanmış', 'verified'), stat(t.pending, 'Bekliyor (tek bildirim)', 'pending'),
         stat(t.disputed, 'Tartışmalı', 'disputed'), stat(t.hidden, 'Gizli', 'hidden'), stat(t.new7d, 'Son 7 gün yeni')));
 
-      // yol: Türkiye › ilçe › mahalle › sokak
+      // yol: Türkiye › il › ilçe › mahalle › sokak
       const crumbs = h('nav', { class: 'row crumbs', 'aria-label': 'Konum' });
       const crumb = (label, o, on) => on ? h('button', { type: 'button', class: 'lnk', text: label, onclick: () => kmGo(o) }) : h('b', { text: label });
-      crumbs.appendChild(crumb('Türkiye', { p: '', d: '', n: '', s: '', k: '', dName: '', nName: '', sName: '' }, !!km.d));
+      crumbs.appendChild(crumb('Türkiye', KM_RESET, !!km.p));
+      if (km.p) { crumbs.appendChild(h('span', { class: 'muted', text: '›' })); crumbs.appendChild(crumb(km.pName, { d: '', n: '', s: '', k: '', dName: '', nName: '', sName: '' }, !!km.d)); }
       if (km.d) { crumbs.appendChild(h('span', { class: 'muted', text: '›' })); crumbs.appendChild(crumb(km.dName, { n: '', s: '', k: '', nName: '', sName: '' }, !!km.n)); }
       if (km.n) { crumbs.appendChild(h('span', { class: 'muted', text: '›' })); crumbs.appendChild(crumb(km.nName, { s: '', k: '', sName: '' }, !!km.s)); }
       if (km.s) { crumbs.appendChild(h('span', { class: 'muted', text: '›' })); crumbs.appendChild(h('b', { text: km.sName })); }
@@ -1028,19 +1195,22 @@
       c.appendChild(h('div', { class: 'kmap' }, h('div', null, mapEl, legend, detail), side));
 
       // yan liste: bir alt düzey
-      const lvl = { district: 'İlçeler', neighborhood: 'Mahalleler', street: 'Sokaklar' }[s.level];
+      const lvl = { province: 'İller', district: 'İlçeler', neighborhood: 'Mahalleler', street: 'Sokaklar' }[s.level];
       side.appendChild(h('h3', { text: lvl + ' (' + s.items.length + (s.more ? '+' : '') + ')' }));
       if (!s.items.length) side.appendChild(h('p', { class: 'muted', text: 'Bu düzeyde henüz kapı noktası yok.' }));
       s.items.forEach((x) => {
         const pct = x.total ? Math.round((x.verified / x.total) * 100) : 0;
-        const label = s.level === 'street' ? x.street : x.name + (s.level === 'district' && x.province ? ' · ' + x.province : '');
+        const label = s.level === 'street' ? x.street : x.name;
         const sub = (s.level === 'street' ? x.doors + ' kapı numarası · ' : x.total + ' nokta · ') + x.verified + ' doğrulanmış' + (x.disputed ? ' · ' + x.disputed + ' tartışmalı' : '');
         const on = s.level === 'street' && km.s === x.s && km.k === x.k;
+        // 1.22.0: denetim işaretleri — resmi listede (TÜİK) olmayan il / ilçe / mahalle, ilinin merkezinden 250 km'den uzak konum
+        const warn = [x.official === false ? (s.level === 'province' ? 'il belirsiz' : 'resmi listede yok') : '', x.far ? 'konum ilden uzak' : ''].filter(Boolean);
         side.appendChild(h('button', { type: 'button', class: 'item' + (on ? ' on' : ''), 'aria-pressed': on ? 'true' : 'false', onclick: () => {
-          if (s.level === 'district') kmGo({ p: x.p, d: x.d, dName: x.district || x.name, n: '', s: '', k: '', nName: '', sName: '' });
+          if (s.level === 'province') kmGo({ ...KM_RESET, p: x.p, pName: x.name });
+          else if (s.level === 'district') kmGo({ p: x.p, d: x.d, dName: x.district || x.name, n: '', s: '', k: '', nName: '', sName: '' });
           else if (s.level === 'neighborhood') kmGo({ p: x.p, n: x.n, nName: x.neighborhood || x.name, s: '', k: '', sName: '' });
           else kmGo(on ? { s: '', k: '', sName: '' } : { s: x.s, k: x.k, sName: x.street });
-        } }, h('span', null, h('span', { class: 'nm', text: label }), h('br'), h('span', { class: 'small muted', text: sub }),
+        } }, h('span', null, h('span', { class: 'nm', text: label }), ...warn.map((w) => h('span', { class: 'pill warn', text: '⚠ ' + w })), h('br'), h('span', { class: 'small muted', text: sub }),
           h('span', { class: 'bar', title: '%' + pct + ' doğrulanmış' }, h('span', { style: 'width:' + pct + '%' }))), h('span', { class: 'muted', text: '›' })));
       });
       if (s.more) side.appendChild(h('p', { class: 'small muted', text: s.more + ' satır daha var; üstteki yoldan daralt.' }));
@@ -1057,20 +1227,36 @@
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> katkıcıları' }).addTo(map);
     const group = L.featureGroup().addTo(map);
     if (!km.d) {
-      // Türkiye düzeyi: ilçe başına bir daire (büyüklüğü nokta sayısı); tıklayınca ilçeye in
+      // Türkiye düzeyi: il başına, il düzeyi: ilçe başına bir daire (büyüklüğü nokta sayısı); tıklayınca bir alt düzeye in
       s.items.filter((x) => x.lat != null).forEach((x) => {
         const r = Math.max(7, Math.min(28, 5 + Math.sqrt(x.total) * 2));
         const col = x.verified ? KCOL.verified : KCOL.pending;
         L.circleMarker([x.lat, x.lon], { radius: r, color: '#0D1B2A', weight: 1.5, fillColor: col, fillOpacity: 0.85 })
           .bindTooltip(x.name + ': ' + x.total + ' nokta, ' + x.verified + ' doğrulanmış', { direction: 'top', offset: [0, -6] })
-          .on('click', () => kmGo({ p: x.p, d: x.d, dName: x.district || x.name }))
+          .on('click', () => (s.level === 'province' ? kmGo({ ...KM_RESET, p: x.p, pName: x.name }) : kmGo({ p: x.p, d: x.d, dName: x.district || x.name })))
           .addTo(group);
       });
-      if (group.getLayers().length) map.fitBounds(group.getBounds().pad(0.2), { maxZoom: 12 });
+      if (group.getLayers().length) map.fitBounds(group.getBounds().pad(0.2), { maxZoom: 12, animate: false });
       return;
     }
+    // 1.22.0: yakınlaşınca (17+) ekrandaki noktaların kapı numarası haritaya yazılır (en çok 400 etiket)
+    const labels = L.layerGroup().addTo(map);
+    const pts = [];
+    const drawLabels = () => {
+      if (km.map !== map) return; // başka düzeye geçildi: eski harita kaldırıldı
+      labels.clearLayers();
+      if (map.getZoom() < 17) return;
+      const b = map.getBounds();
+      pts.filter((x) => b.contains([x.lat, x.lon])).slice(0, 400).forEach((x) => {
+        const el = h('span', { class: 'door-lbl' + (x.status === 'verified' ? ' ok' : ''), text: x.door });
+        L.marker([x.lat, x.lon], { icon: L.divIcon({ className: 'door-lbl-wrap', html: el, iconSize: null, iconAnchor: [-8, 10] }), interactive: false, keyboard: false }).addTo(labels);
+      });
+    };
+    map.on('zoomend moveend', drawLabels);
     api('GET', '/v1/admin/doors?' + qs({ p: km.p, d: km.d, n: km.n, s: km.s, k: km.s ? km.k : '', status: km.status, limit: 3000 })).then((r) => {
+      if (km.map !== map) return; // yanıt gelene kadar başka düzeye geçildi: eski haritaya çizilmez
       r.items.forEach((x) => {
+        pts.push(x);
         L.circleMarker([x.lat, x.lon], {
           radius: x.status === 'verified' ? 7 : 6, color: x.status === 'hidden' ? '#FF4DA6' : '#0D1B2A', weight: x.status === 'hidden' ? 2 : 1.2,
           fillColor: KCOL[x.status], fillOpacity: x.status === 'hidden' ? 0.55 : 0.9,
@@ -1078,7 +1264,8 @@
           .on('click', () => kmDetail(x.id, detail))
           .addTo(group);
       });
-      if (group.getLayers().length) map.fitBounds(group.getBounds().pad(0.15), { maxZoom: 18 });
+      if (group.getLayers().length) map.fitBounds(group.getBounds().pad(0.15), { maxZoom: 18, animate: false });
+      drawLabels();
       if (r.total > r.items.length) detail.parentNode.insertBefore(h('p', { class: 'small muted', text: r.total + ' noktanın en yeni ' + r.items.length + ' tanesi gösteriliyor; mahalle ya da sokak seçerek daralt.' }), detail);
     }).catch((er) => { el.appendChild(h('p', { class: 'msg bad', text: er.message })); });
   }
@@ -1178,6 +1365,35 @@
     c.appendChild(h('p', { class: 'small muted', text: 'Uygulamada profil fotoğrafı yok (kişiler avatar seçer); yalnız işletmeler logo yükler. Logo olmayan resmi (kişi fotoğrafı, uygunsuz görsel) silin: kullanıcı yüklerken bu uyarıyı görür. Silinen logo uygulamada da kalkar.' }));
     c.appendChild(info); c.appendChild(list); c.appendChild(h('div', { class: 'row' }, more));
     load(true);
+    // 1.25.0: ödül ürünlerinin fotoğrafları (ürün başına en çok 3; yüklerken "yalnız ürünün fotoğrafı" uyarısı yazar)
+    const plist = h('div', { class: 'logos' }); const pinfo = h('div', { class: 'msg', role: 'status' });
+    const pmore = h('button', { type: 'button', class: 'btn ghost', text: 'Daha eski fotoğraflar', hidden: true });
+    let plast = '';
+    function pcard(x) {
+      const box = h('div', { class: 'box logo-card' });
+      box.appendChild(h('img', { src: '/v1/rewards/' + encodeURIComponent(x.rewardId) + '/photos/' + x.idx + '?v=' + encodeURIComponent(x.v), alt: 'ürün fotoğrafı: ' + (x.reward || ''), class: 'logo-img', loading: 'lazy' }));
+      box.appendChild(h('div', { class: 'grow' },
+        h('h3', { text: (x.reward || '(adsız)') + ' · ' + (x.idx + 1) + '. fotoğraf' }),
+        h('div', { class: 'muted small', text: (x.brand || '—') + (x.owner.code ? ' (' + x.owner.code + ')' : '') + ' · ' + (ROLE[x.owner.role] || x.owner.role || '') + ' · ' + x.kb + ' KB · ' + when(x.at) }),
+        confirmBtn('Fotoğrafı sil', 'danger', 'Fotoğraf silinsin mi? Ödülü koyana duyuru gider.', () => {
+          api('DELETE', '/v1/admin/rewards/' + encodeURIComponent(x.rewardId) + '/photos/' + x.idx).then(() => { box.remove(); if (!plist.firstChild) say(pinfo, 'Fotoğraf yok.', ''); }).catch((er) => say(pinfo, er.message, 'bad'));
+        })));
+      return box;
+    }
+    function pload(reset) {
+      if (reset) { clear(plist); plast = ''; }
+      api('GET', '/v1/admin/rewards/photos?' + qs({ before: plast, limit: 60 })).then((r) => {
+        r.items.forEach((x) => plist.appendChild(pcard(x)));
+        if (r.items.length) plast = r.items[r.items.length - 1].at;
+        pmore.hidden = r.items.length < 60;
+        say(pinfo, !plist.firstChild ? 'Fotoğraf yok.' : '', '');
+      }).catch((er) => say(pinfo, er.message, 'bad'));
+    }
+    pmore.addEventListener('click', () => pload(false));
+    c.appendChild(h('h2', { text: 'Ödül ürünü fotoğrafları' }));
+    c.appendChild(h('p', { class: 'small muted', text: 'Sponsor ve işletmeler katalogdaki her ürün için en çok 3 fotoğraf yükler; kuryeler ürün penceresinde görür. Ürünün kendi fotoğrafı olmayan resmi (kişi, reklam afişi, uygunsuz görsel) silin: yüklerken bu uyarı yazar, sildiğinizde ödülü koyana duyuru gider.' }));
+    c.appendChild(pinfo); c.appendChild(plist); c.appendChild(h('div', { class: 'row' }, pmore));
+    pload(true);
   }
 
   // ------------------------------------------------------------------ Hatalar

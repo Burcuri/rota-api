@@ -33,6 +33,8 @@ class RelayIn(BaseModel):
     to: list[str] = Field(min_length=1, max_length=50)
     body: str = Field(min_length=1)
     device_id: str | None = Field(default=None, alias="deviceId", max_length=64)
+    # 1.25.0: grup haritası noktası gibi SESSİZ mesaj — telefona bildirim gitmez (içeriğe sunucu yine bakmaz)
+    silent: bool = False
 
     model_config = {"populate_by_name": True}
 
@@ -140,6 +142,9 @@ def make_router(ttl_days: float, max_bytes: int, user_max_bytes: int, group_max:
     @r.post("/v1/relay")
     def send(b: RelayIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
         maybe_purge(db)
+        # 1.23.0 (kullanıcı kararı 3 Kasım 2026): sponsor kurye kullanmaz — grup sohbeti ve yazışmalar sponsora kapalı
+        if user.active_role == "sponsor":
+            raise HTTPException(403, "Sponsor hesabında mesajlaşma ve grup yok")
         size = len(b.body.encode("utf-8"))
         if size > max_bytes:
             raise HTTPException(413, f"Mesaj çok büyük (en çok {max_bytes // 1024} KB)")
@@ -152,8 +157,11 @@ def make_router(ttl_days: float, max_bytes: int, user_max_bytes: int, group_max:
         if len(to) > group_max - 1:
             raise HTTPException(400, f"Bir mesaj en çok {group_max - 1} kişiye gider (grup üst sınırı {group_max})")
         users = db.query(User).filter(User.id.in_(to), User.deleted_at.is_(None)).all()  # 1.20.0: silinen hesaba mesaj gitmez
-        found = {u.id for u in users}
+        sponsors = {u.id for u in users if u.active_role == "sponsor"}  # 1.23.0: sponsora mesaj gitmez
+        found = {u.id for u in users} - sponsors
         if not found:
+            if sponsors:
+                raise HTTPException(403, "Sponsor hesaplarına mesaj gönderilmez")
             raise HTTPException(404, "Alıcı bulunamadı")
         # Alıcının bekleyen mesajlarının toplam boyutu sınırı (kötüye kullanım ve dolmuş kutu)
         for uid_ in found:
@@ -185,7 +193,7 @@ def make_router(ttl_days: float, max_bytes: int, user_max_bytes: int, group_max:
         for (dev,) in db.query(Device.id).filter(Device.user_id == user.id, Device.id != (b.device_id or "")).all():
             db.add(RelayDelivery(msg_id=msg.id, user_id=user.id, device_id=dev))
         events.log(db, "relay.send", user.id, n=len(found))  # yalnız kaç kişiye gittiği; içerik ve alıcılar yazılmaz
-        for uid_ in found:  # 1.19.0: telefona bildirim ("📩 Yeni mesajınız var"; içerik ve ad yok). Aynı kişiden 60 sn'de bir.
+        for uid_ in ([] if b.silent else found):  # 1.19.0: telefona bildirim ("📩 Yeni mesajınız var"; içerik ve ad yok). Aynı kişiden 60 sn'de bir.
             push_queue(db, uid_, "msg", thread=user.id)
         db.commit()
         return {"id": msg.id, "at": now.isoformat(), "recipients": sorted(found), "missing": [t for t in to if t not in found]}

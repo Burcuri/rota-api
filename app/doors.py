@@ -34,32 +34,15 @@ from .db import get_db
 from .models import ConsentLog, DoorPoint, DoorReport, User, now
 
 # ---------------------------------------------------------------- metin normalleştirme
-_TR = str.maketrans({"İ": "i", "I": "i", "ı": "i", "Ş": "s", "ş": "s", "Ğ": "g", "ğ": "g", "Ü": "u", "ü": "u", "Ö": "o", "ö": "o", "Ç": "c", "ç": "c"})
+# 1.22.0: kurallar tek yerde (places.py): resmi il / ilçe / mahalle adları, yol / site / kapı no yazımı. Anahtarlar DÜZGÜN yazılmış
+# addan üretilir; böylece "atatürk cad.", "ATATÜRK CADDESİ" ve "Atatürk Caddesi" aynı yere düşer, "Alnya" resmi "Alanya"ya bağlanır.
+from . import places
+from .places import (  # noqa: E402,F401  (eski içe almalar bozulmasın)
+    DISTRICT_NOISE, KIND_WORDS, NEIGH_NOISE, NO_TAIL as _NO_TAIL, PROVINCE_NOISE, district_core, door_parts, fold, neigh_core,
+    province_core, tidy, words,
+)
 
-
-def fold(s: str) -> str:
-    """Türkçe harfleri düz Latin'e indirir, küçültür (İ/ı tuzağı yok: önce eşlenir, sonra küçültülür)."""
-    s = (s or "").translate(_TR)
-    s = unicodedata.normalize("NFKD", s)
-    return "".join(ch for ch in s if not unicodedata.combining(ch)).lower()
-
-
-def words(s: str) -> list[str]:
-    return re.sub(r"[^a-z0-9]+", " ", fold(s)).split()
-
-
-KIND_WORDS = {
-    "cadde": "cadde", "caddesi": "cadde", "cad": "cadde", "cd": "cadde",
-    "sokak": "sokak", "sokagi": "sokak", "sok": "sokak", "sk": "sokak",
-    "bulvar": "bulvar", "bulvari": "bulvar", "blv": "bulvar", "bul": "bulvar", "bulv": "bulvar",
-    "meydan": "meydan", "meydani": "meydan",
-}
 STREET_NOISE = {"no", "nolu", "numara", "numarali"}
-NEIGH_NOISE = {"mahallesi", "mahalle", "mah", "mh"}
-DISTRICT_NOISE = {"ilcesi", "ilce"}
-PROVINCE_NOISE = {"ili", "il", "province", "buyuksehir", "belediyesi"}
-
-_NO_TAIL = re.compile(r"\b(no|numara)\b\s*[:.\-]?\s*\d.*$", re.IGNORECASE)
 
 
 def street_parts(raw: str) -> tuple[str, str]:
@@ -72,39 +55,6 @@ def street_parts(raw: str) -> tuple[str, str]:
         elif w not in STREET_NOISE:
             core.append(w)
     return " ".join(core)[:120], kind
-
-
-# Anahtarlar sütun genişliğine kırpılır (hem yazarken hem sorgularken aynı işlev kullanılır). Böylece alışılmadık Unicode
-# karakterler (ör. "㎦" → "km3" olarak genişler) PostgreSQL'de VARCHAR taşmasına ve tüm paketin 500 vermesine yol açamaz.
-def neigh_core(raw: str) -> str:
-    return " ".join(w for w in words(raw) if w not in NEIGH_NOISE)[:100]
-
-
-def district_core(raw: str) -> str:
-    return " ".join(w for w in words(raw) if w not in DISTRICT_NOISE)[:80]
-
-
-def province_core(raw: str) -> str:
-    return " ".join(w for w in words(raw) if w not in PROVINCE_NOISE)[:60]
-
-
-_DOOR_RE = re.compile(r"^\s*(?:no|numara)?\s*[:.\-]?\s*(\d{1,5})(?:\s*[/\-]?\s*([A-Za-z]))?(?![A-Za-z0-9])", re.IGNORECASE)
-
-
-def door_parts(raw: str) -> tuple[str, int] | None:
-    """Bina numarası: '12' · '12A' · '12/A' → 12A · '12/3' (daire) → 12. Çözülemezse None."""
-    m = _DOOR_RE.match(fold(raw))
-    if not m:
-        return None
-    n = int(m.group(1))
-    if n <= 0 or n > 99999:
-        return None
-    return f"{n}{(m.group(2) or '').upper()}", n
-
-
-def tidy(raw: str, maxlen: int) -> str:
-    s = re.sub(r"\s+", " ", "".join(ch for ch in (raw or "") if ch.isprintable())).strip()
-    return s[:maxlen]
 
 
 def looks_personal(s: str) -> bool:
@@ -170,7 +120,7 @@ SOURCES_FROM_APP = {"checkin", "pin"}  # "recipient" yalnız sunucu içinden (al
 
 class ItemIn(BaseModel):
     province: str = Field(default="", max_length=80)
-    district: str = Field(max_length=100)
+    district: str = Field(default="", max_length=100)
     neighborhood: str = Field(max_length=120)
     street: str = Field(max_length=160)
     site: str = Field(default="", max_length=120)
@@ -192,14 +142,17 @@ class Clean:
     """Doğrulanmış, normalleştirilmiş tek rapor."""
 
     def __init__(self, it: ItemIn):
-        self.province = tidy(it.province, 60)
-        self.district = tidy(it.district, 80)
-        self.neighborhood = tidy(it.neighborhood, 100)
-        self.street = tidy(_NO_TAIL.sub("", it.street), 120)
-        self.site = tidy(it.site, 60)
-        for label, v in (("il", self.province), ("ilçe", self.district), ("mahalle", self.neighborhood), ("sokak", self.street), ("site", self.site), ("kapı", tidy(it.door, 40))):
-            if looks_personal(v):
+        for label, v in (("il", it.province), ("ilçe", it.district), ("mahalle", it.neighborhood), ("sokak", it.street), ("site", it.site), ("kapı", it.door)):
+            if looks_personal(tidy(v, 160)):
                 raise ValueError(f"kisisel_veri:{label}")
+        # 1.22.0: resmi il / ilçe / mahalle adı (il boşsa ilçeden), yol / site düzgün yazılır (places.py)
+        area = places.canon_area(it.province, it.district, it.neighborhood, it.lat, it.lon)
+        self.province = area.province[:60]
+        self.district = area.district[:80]
+        self.neighborhood = area.neighborhood[:100]
+        self.official = area.did is not None and area.official_neighborhood
+        self.street = places.canon_street(it.street)[:120]
+        self.site = places.canon_site(it.site)[:60]
         self.province_k = province_core(self.province)
         self.district_k = district_core(self.district)
         self.neigh_k = neigh_core(self.neighborhood)
@@ -241,6 +194,9 @@ def make_router(daily_max: int = 400, require_consent: bool = False, trust_score
             "lon": round(p.lon, 6),
             "street": p.street,
             "site": p.site or "",
+            "neighborhood": p.neighborhood or "",
+            "district": p.district or "",
+            "province": p.province or "",
             "verified": verified(p),
             "confirms": p.confirms or 0,
         }
@@ -296,6 +252,8 @@ def make_router(daily_max: int = 400, require_consent: bool = False, trust_score
                 created = True
         if c.vote == "confirm" and c.site and not p.site:
             p.site = c.site  # ilk bildirilen site/bina adı kalır
+        if c.vote == "confirm" and c.province and not p.province_k:
+            p.province, p.province_k = c.province, c.province_k  # 1.22.0: ili boş kalmış eski nokta ilini alır
         existing = db.query(DoorReport).filter(DoorReport.point_id == p.id, DoorReport.reporter == reporter).first()
         if existing is not None:
             if existing.vote == c.vote:
@@ -363,12 +321,13 @@ def make_router(daily_max: int = 400, require_consent: bool = False, trust_score
         db.commit()
         return {"results": results, "accepted": accepted}
 
-    def area_points(db: Session, district: str, neighborhood: str) -> tuple[str, str, list[DoorPoint]]:
-        dk, nk = district_core(district), neigh_core(neighborhood)
-        if not dk or not nk:
+    def area_points(db: Session, province: str, district: str, neighborhood: str, lat: float | None = None, lon: float | None = None) -> tuple[str, list[DoorPoint]]:
+        if not district_core(district) or not neigh_core(neighborhood):
             raise HTTPException(400, "İlçe ve mahalle gerekli")
+        a = places.canon_area(province, district, neighborhood, lat, lon)
+        dk, nk = district_core(a.district), neigh_core(a.neighborhood)
         rows = db.query(DoorPoint).filter(DoorPoint.district_k == dk, DoorPoint.neigh_k == nk, DoorPoint.hidden.is_(False)).limit(6000).all()
-        return dk, nk, rows
+        return province_core(a.province), rows
 
     @r.get("/v1/doors/street")
     def street_doors(
@@ -383,11 +342,10 @@ def make_router(daily_max: int = 400, require_consent: bool = False, trust_score
         db: Session = Depends(get_db),
     ):
         """Bir sokağın bilinen kapı noktaları (kapı numarası başına en iyi aday), numaraya göre sıralı."""
-        _, _, rows = area_points(db, district, neighborhood)
-        sc, kind = street_parts(_NO_TAIL.sub("", street))
+        pk, rows = area_points(db, province, district, neighborhood, lat, lon)
+        sc, kind = street_parts(places.canon_street(street))
         if not sc:
             raise HTTPException(400, "Sokak gerekli")
-        pk = province_core(province)
         best: dict[str, DoorPoint] = {}
 
         def rank(p: DoorPoint):
@@ -416,8 +374,7 @@ def make_router(daily_max: int = 400, require_consent: bool = False, trust_score
         db: Session = Depends(get_db),
     ):
         """Mahallede ortak katmanda bilinen sokak adları (öneri için). q: yazılan harfler."""
-        _, _, rows = area_points(db, district, neighborhood)
-        pk = province_core(province)
+        pk, rows = area_points(db, province, district, neighborhood)
         qk = " ".join(words(q))
         groups: dict[tuple[str, str], list[DoorPoint]] = {}
         for p in rows:

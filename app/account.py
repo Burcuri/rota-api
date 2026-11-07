@@ -36,14 +36,20 @@ from .db import SessionLocal, get_db
 from .limits import Window
 from .marks import code_of
 from .moderation import contains_profanity
-from .models import AccountDoc, AccountState, AdBooking, Admin, CoinEntry, GuideBackup, Job, Notice, User, now, uid
+from .logos import logo_version
+from .models import AccountDoc, AccountState, AdBooking, AdSeen, AdStat, Admin, CoinEntry, GuideBackup, Job, Notice, User, now, uid
 
 SECTIONS = ("notif", "privacy", "settings", "business", "sponsor", "templates", "bizItems")
 DOC_MAX_BYTES = 32 * 1024
 FUTURE_SKEW_MS = 5 * 60 * 1000
 COIN_PACKS = (50, 200, 500)
-AD_COIN_PER_DAY = 30  # haritada bir noktada bir günlük reklam (örnek fiyat; uygulamadaki adPackages.ts ile aynı)
-PROMO_COIN_PER_DAY = 20  # öne çıkan ilan, gün başına (örnek fiyat; uygulamadaki store.tsx ile aynı)
+# 1.26.0 (kullanıcı kararları 7 Kasım 2026): "bir coin 10 TL gibi görünsün başlangıç ölçütü" → eski örnek fiyatlar 10'a bölündü
+# ("10'a bölelim"); tabela "10 TL yazılsın şimdilik, aylık ödeme". Coin'in gerçek fiyatını mağaza belirler (Play Console / App Store Connect).
+COIN_TL = 10  # 1 Rota coin'in gösterim değeri (TL)
+AD_COIN_PER_DAY = 3  # haritada bir noktada bir günlük reklam = 30 TL (eskiden 30 coin; uygulamadaki adPackages.ts ile aynı)
+PROMO_COIN_PER_DAY = 2  # öne çıkan ilan, gün başına = 20 TL (eskiden 20 coin; uygulamadaki store.tsx ile aynı)
+TABELA_COIN = 1  # tabela reklamı: ayda 1 coin = 10 TL
+TABELA_DAYS = 30  # tabela bir ay sürer; "Uzat" ile bir ay daha
 AD_DAYS = (1, 7, 30)
 PROMO_DAYS = (1, 7, 30)
 AD_PACKAGES = (("p1-1", 1, 1), ("p1-7", 1, 7), ("p1-30", 1, 30), ("p3-7", 3, 7), ("p3-30", 3, 30), ("p5-7", 5, 7))
@@ -234,12 +240,53 @@ def split_cost(total: int, n: int) -> list[int]:
     return [base + (total - base * n if i == 0 else 0) for i in range(n)]
 
 
-def ad_out(a: AdBooking, t: datetime) -> dict:
-    return {
+def ad_out(a: AdBooking, t: datetime, stats: dict | None = None) -> dict:
+    out = {
         "id": a.id, "label": a.label, "lat": a.lat, "lon": a.lon, "days": a.days, "cost": a.cost, "package": a.package_id or "",
         "group": a.group_id or "", "at": ms(a.starts_at), "endsAt": ms(a.ends_at),
         "active": a.removed_at is None and (utc(a.ends_at) or t) > t,
+        # 1.26.0: harita reklamı ya da TABELA (işletmenin / sponsorun kendi yerinde logolu, aylık)
+        "kind": "tabela" if a.package_id == "tabela" else "harita",
     }
+    if stats is not None:
+        out["stats"] = stats.get(a.id) or {"viewers": 0, "shows": 0, "taps": 0, "todayViewers": 0, "todayShows": 0, "todayTaps": 0}
+    return out
+
+
+def tr_day(t: datetime | None = None) -> str:
+    """Türkiye tarihi (UTC+3; yaz saati yok): reklam istatistiği günü"""
+    return ((t or now()) + timedelta(hours=3)).strftime("%Y-%m-%d")
+
+
+def ad_stats(db: Session, ids: list[str]) -> dict:
+    """Reklam başına toplam ve bugünkü sayılar (yalnız sayı; kuryenin kimliği yok)"""
+    if not ids:
+        return {}
+    out: dict = {i: {"viewers": 0, "shows": 0, "taps": 0, "todayViewers": 0, "todayShows": 0, "todayTaps": 0} for i in ids}
+    for ad_id, sh, tp in db.query(AdStat.ad_id, func.sum(AdStat.shows), func.sum(AdStat.taps)).filter(AdStat.ad_id.in_(ids)).group_by(AdStat.ad_id).all():
+        out[ad_id]["shows"], out[ad_id]["taps"] = int(sh or 0), int(tp or 0)
+    for ad_id, n in db.query(AdSeen.ad_id, func.count(AdSeen.user_id)).filter(AdSeen.ad_id.in_(ids)).group_by(AdSeen.ad_id).all():
+        out[ad_id]["viewers"] = int(n or 0)
+    day = tr_day()
+    for x in db.query(AdStat).filter(AdStat.ad_id.in_(ids), AdStat.day == day).all():
+        out[x.ad_id].update(todayViewers=int(x.viewers or 0), todayShows=int(x.shows or 0), todayTaps=int(x.taps or 0))
+    return out
+
+
+def active_tabela(db: Session, owner_id: str, t: datetime | None = None) -> AdBooking | None:
+    t = t or now()
+    return (db.query(AdBooking).filter(AdBooking.owner_id == owner_id, AdBooking.package_id == "tabela", AdBooking.removed_at.is_(None),
+                                       AdBooking.ends_at > t).order_by(AdBooking.ends_at.desc()).first())
+
+
+def tabela_owners(db: Session, ids: set[str]) -> set[str]:
+    """Tabelası yayında olan hesaplar (ilan listesinde 🪧 işareti)"""
+    ids = {i for i in ids if i}
+    if not ids:
+        return set()
+    t = now()
+    return {o for (o,) in db.query(AdBooking.owner_id).filter(AdBooking.owner_id.in_(ids), AdBooking.package_id == "tabela",
+                                                              AdBooking.removed_at.is_(None), AdBooking.ends_at > t).distinct().all()}
 
 
 def my_ads(db: Session, user_id: str) -> list[AdBooking]:
@@ -301,10 +348,24 @@ class PointIn(BaseModel):
 
 
 class AdIn(BaseModel):
-    label: str = Field(max_length=200)
-    points: list[PointIn] = Field(min_length=1, max_length=5)
+    label: str = Field(default="", max_length=200)
+    points: list[PointIn] = Field(default_factory=list, max_length=5)
     days: int = 0
     package: str = Field(default="", max_length=16)
+
+
+class ExtendIn(BaseModel):
+    days: int = 0  # harita reklamı: 1 / 7 / 30; tabela: 30 (bir ay)
+
+
+class SeenItem(BaseModel):
+    id: str = Field(min_length=1, max_length=32)
+    shows: int = Field(default=0, ge=0, le=1000)
+    taps: int = Field(default=0, ge=0, le=1000)
+
+
+class SeenIn(BaseModel):
+    items: list[SeenItem] = Field(default_factory=list, max_length=60)
 
 
 class PromoteIn(BaseModel):
@@ -327,9 +388,11 @@ def make_router(user_out: Callable[[User], dict], test_buy: bool = True) -> APIR
     ad_win = Window(30, 86400)  # günde en çok 30 reklam rezervasyonu
     guide_win = Window(12, 86400)  # günde en çok 12 rehber yedeği
 
+    seen_win = Window(240, 3600)  # 1.26.0: kurye başına saatte en çok 240 reklam görüntüleme bildirimi
     rules = {
         "packs": list(COIN_PACKS), "adPerDay": AD_COIN_PER_DAY, "promoPerDay": PROMO_COIN_PER_DAY, "adDays": list(AD_DAYS),
         "promoDays": list(PROMO_DAYS), "packages": [package(i) for i, _, _ in AD_PACKAGES], "testBuy": test_buy, "guideHours": GUIDE_HOURS,
+        "coinTl": COIN_TL, "tabela": {"cost": TABELA_COIN, "days": TABELA_DAYS},
     }
 
     def backup_info(db: Session, user_id: str) -> dict | None:
@@ -356,7 +419,8 @@ def make_router(user_out: Callable[[User], dict], test_buy: bool = True) -> APIR
         if since == 0 or (st is not None and int(st.coins_rev or 0) > since):
             out["coins"] = coins_out(db, user.id)
         if since == 0 or (st is not None and int(st.ads_rev or 0) > since):
-            out["ads"] = {"items": [ad_out(a, t) for a in my_ads(db, user.id)]}
+            rows = my_ads(db, user.id)
+            out["ads"] = {"items": [ad_out(a, t, ad_stats(db, [a.id for a in rows])) for a in rows] if rows else []}
         return out
 
     @r.put("/v1/account/docs/{section}")
@@ -408,13 +472,49 @@ def make_router(user_out: Callable[[User], dict], test_buy: bool = True) -> APIR
     @r.get("/v1/ads/mine")
     def ads_mine(user: User = Depends(current_user), db: Session = Depends(get_db)):
         t = now()
-        return {"items": [ad_out(a, t) for a in my_ads(db, user.id)]}
+        rows = my_ads(db, user.id)
+        st = ad_stats(db, [a.id for a in rows])
+        return {"items": [ad_out(a, t, st) for a in rows]}
+
+    def tabela_create(b: AdIn, user: User, db: Session) -> dict:
+        """1.26.0 TABELA: işletmede İşletme Profili'ndeki konumda (değiştirilemez), sponsorda haritada bir kez seçilen yerde; logolu,
+        ayda TABELA_COIN coin. Hesap başına aynı anda tek tabela (süresi dolmadan yenisi alınmaz; "Uzat")."""
+        t = now()
+        if active_tabela(db, user.id, t) is not None:
+            raise HTTPException(409, "Tabelan zaten yayında; Reklamlarım'dan uzatabilirsin")
+        sign = ""
+        if user.active_role == "employer":
+            from .bizcard import business_card  # döngüsel içe aktarma olmasın
+            c = business_card(db, user)
+            # yalnız İşletme Profili'nde işaretlenen konum (son ilanın başlama noktası değil): kullanıcı kararı 7 Kasım 2026
+            if c.get("lat") is None or c.get("lon") is None or c.get("locFrom") != "profil":
+                raise HTTPException(400, "Önce İşletme Profili'nde işletmenin konumunu işaretle; tabela orada görünür")
+            lat, lon = float(c["lat"]), float(c["lon"])
+            sign = _s(c.get("signboard") or "", 40)  # profildeki "tabela adı" varsa o yazar
+        else:
+            if len(b.points) != 1:
+                raise HTTPException(400, "Tabelanın yerini haritada seç (tek nokta)")
+            lat, lon = b.points[0].lat, b.points[0].lon
+        name = sign or _s(display_names(db, {user.id}).get(user.id) or user.name, 40) or "Tabela"
+        if not ad_win.allow(user.id):
+            raise HTTPException(429, "Bugün çok fazla reklam rezervasyonu yapıldı")
+        charge(db, user.id, TABELA_COIN, "ad", f"Tabela reklamı · {name} · {TABELA_DAYS} gün", ref="tabela", ads=True)
+        a = AdBooking(id=uid(), owner_id=user.id, label=name, lat=lat, lon=lon, days=TABELA_DAYS, cost=TABELA_COIN, package_id="tabela",
+                      group_id="", starts_at=t, ends_at=t + timedelta(days=TABELA_DAYS), created_at=t)
+        db.add(a)
+        events.log(db, "ad.tabela", user.id, a.id, days=TABELA_DAYS, cost=TABELA_COIN)
+        db.commit()
+        return {"items": [ad_out(a, t)], "coins": coins_out(db, user.id)}
 
     @r.post("/v1/ads")
     def ad_create(b: AdIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
         """Haritada reklam: serbest (1 nokta · 1 / 7 / 30 gün) ya da paket (N nokta × D gün tek bedel). Coin sunucuda düşer."""
         if user.active_role not in ("sponsor", "employer"):
             raise HTTPException(403, "Reklamı sponsor ya da işletme verir")
+        if b.package == "tabela":
+            return tabela_create(b, user, db)
+        if not b.points:
+            raise HTTPException(400, "Haritada reklam noktasını seç")
         label = _s(b.label, 200)
         err = ad_label_error(label)
         if err:
@@ -465,6 +565,80 @@ def make_router(user_out: Callable[[User], dict], test_buy: bool = True) -> APIR
             db.commit()
         return {"ok": True}
 
+    @r.post("/v1/ads/{ad_id}/extend")
+    def ad_extend(ad_id: str, b: ExtendIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        """1.26.0 TEK DOKUNUŞLA UZATMA: aynı noktada aynı reklam N gün daha (tabela: bir ay daha). Süresi dolmuş (pasif) reklam da
+        yeniden açılır: bitiş = (bitiş geçmediyse bitiş, geçtiyse şimdi) + N gün. Coin sunucuda düşer."""
+        a = db.get(AdBooking, ad_id)
+        if a is None or a.owner_id != user.id or a.removed_at is not None:
+            raise HTTPException(404, "Reklam bulunamadı")
+        tab = a.package_id == "tabela"
+        if tab:
+            days, cost = TABELA_DAYS, TABELA_COIN
+            other = active_tabela(db, user.id)
+            if other is not None and other.id != a.id:
+                raise HTTPException(409, "Başka bir tabelan zaten yayında")
+            tx = f"Tabela reklamı uzatma · {a.label} · {days} gün"
+        else:
+            if b.days not in AD_DAYS:
+                raise HTTPException(400, "Süre 1, 7 ya da 30 gün olmalı")
+            days, cost = b.days, b.days * AD_COIN_PER_DAY
+            tx = f"Reklam uzatma · {a.label} · {days} gün"
+        charge(db, user.id, cost, "ad", tx, ref=a.id, ads=True)
+        a = db.get(AdBooking, ad_id)
+        t = now()
+        end = utc(a.ends_at) or t
+        if end <= t:
+            a.starts_at = t
+        a.ends_at = (end if end > t else t) + timedelta(days=days)
+        a.days, a.cost, a.reminded_at = int(a.days or 0) + days, int(a.cost or 0) + cost, None
+        events.log(db, "ad.extend", user.id, a.id, days=days, cost=cost)
+        db.commit()
+        return {"item": ad_out(a, t, ad_stats(db, [a.id])), "coins": coins_out(db, user.id)}
+
+    @r.post("/v1/ads/seen")
+    def ads_seen(b: SeenIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        """1.26.0 REKLAM İSTATİSTİĞİ: kuryenin teslim haritasında görünen (shows) ve dokunulan (taps) reklamlar, toplu. Yalnız kurye;
+        sayılar reklam verene gider, kuryenin kimliği gitmez. Aynı kurye aynı gün aynı reklamı ilk gördüğünde "gören kurye" 1 artar."""
+        if user.active_role != "courier":
+            return {"ok": True, "n": 0}
+        if not seen_win.allow(user.id):
+            raise HTTPException(429, "Çok sık")
+        want = {}
+        for x in b.items:
+            if x.shows or x.taps:
+                w = want.setdefault(x.id, [0, 0])
+                w[0], w[1] = min(50, w[0] + x.shows), min(20, w[1] + x.taps)  # bir bildirimde reklam başına sınır (şişirme olmasın)
+        if not want:
+            return {"ok": True, "n": 0}
+        t = now()
+        day = tr_day(t)
+        ads = {a.id: a for a in db.query(AdBooking).filter(AdBooking.id.in_(list(want)), AdBooking.removed_at.is_(None), AdBooking.ends_at > t).all()}
+        n = 0
+        for ad_id, (sh, tp) in want.items():
+            a = ads.get(ad_id)
+            if a is None or a.owner_id == user.id:
+                continue
+            seen = db.get(AdSeen, (ad_id, user.id))
+            new_today = seen is None or seen.last_day != day
+            if seen is None:
+                db.add(AdSeen(ad_id=ad_id, user_id=user.id, last_day=day))
+            else:
+                seen.last_day = day
+            row = db.get(AdStat, (ad_id, day))
+            if row is None:
+                row = AdStat(ad_id=ad_id, day=day, shows=0, taps=0, viewers=0)
+                db.add(row)
+            row.shows = int(row.shows or 0) + max(sh, 1 if new_today else 0)
+            row.taps = int(row.taps or 0) + tp
+            row.viewers = int(row.viewers or 0) + (1 if new_today else 0)
+            n += 1
+        try:
+            db.commit()
+        except IntegrityError:  # aynı anda iki bildirim: biri yazar, öbürü bir sonraki bildirimde sayılır
+            db.rollback()
+        return {"ok": True, "n": n}
+
     @r.get("/v1/ads/active")
     def ads_active(lat: float = Query(ge=-90, le=90), lon: float = Query(ge=-180, le=180), radius: float = Query(default=30000, ge=100, le=100000),
                    user: User = Depends(current_user), db: Session = Depends(get_db)):
@@ -482,7 +656,10 @@ def make_router(user_out: Callable[[User], dict], test_buy: bool = True) -> APIR
             .all()
         )
         names = display_names(db, {a.owner_id for a in rows})
-        return {"items": [{**ad_out(a, t), "cost": 0, "sponsorId": a.owner_id, "sponsor": names.get(a.owner_id, "")} for a in rows]}
+        owners = {u.id: u for u in db.query(User).filter(User.id.in_({a.owner_id for a in rows})).all()} if rows else {}
+        # 1.26.0: reklam pininde logo (sürüm; resim /v1/logo/{id}) ve tabela
+        return {"items": [{**ad_out(a, t), "cost": 0, "sponsorId": a.owner_id, "sponsor": names.get(a.owner_id, ""), "logo": logo_version(owners.get(a.owner_id))}
+                          for a in rows]}
 
     # ------------------------------------------------------------------ öne çıkan ilan
     @r.post("/v1/jobs/{job_id}/promote")
@@ -590,10 +767,11 @@ def make_router(user_out: Callable[[User], dict], test_buy: bool = True) -> APIR
         rows = q.order_by(AdBooking.created_at.desc()).limit(300).all()
         ppl = {u.id: u for u in db.query(User).filter(User.id.in_({x.owner_id for x in rows})).all()} if rows else {}
         names = display_names(db, set(ppl))
+        st = ad_stats(db, [x.id for x in rows])
         items = []
         for x in rows:
             u = ppl.get(x.owner_id)
-            items.append({**ad_out(x, t), "removed": x.removed_at is not None, "removedBy": x.removed_by or "",
+            items.append({**ad_out(x, t, st), "removed": x.removed_at is not None, "removedBy": x.removed_by or "",
                           "owner": {"id": x.owner_id, "name": u.name if u else "", "shown": names.get(x.owner_id, ""), "code": code_of(u),
                                     "role": u.active_role if u else "", "banned": bool(u and u.banned)}})
         return {"items": items}
@@ -615,12 +793,38 @@ def make_router(user_out: Callable[[User], dict], test_buy: bool = True) -> APIR
         return {"ok": True}
 
     # ------------------------------------------------------------------ temizlik
+    def remind(db: Session, t: datetime) -> int:
+        """1.26.0 "Reklamın yarın bitiyor": bitişine 24 saatten az kalan reklam (1 günlük reklam hariç) için sahibine bir kez duyuru
+        (telefonuna da bildirim gider). Paket noktaları tek duyuru. Uzatılınca yeniden hatırlatılır."""
+        rows = (db.query(AdBooking).filter(AdBooking.removed_at.is_(None), AdBooking.reminded_at.is_(None), AdBooking.ends_at > t,
+                                           AdBooking.ends_at <= t + timedelta(hours=24)).limit(500).all())
+        done: set[tuple[str, str]] = set()
+        n = 0
+        for a in rows:
+            a.reminded_at = t
+            if (a.days or 0) <= 1:
+                continue  # 1 günlük reklam: hatırlatma anlamsız (uzatılınca gün sayısı birikir)
+            key = (a.owner_id, a.group_id or a.id)
+            if key in done:
+                continue
+            done.add(key)
+            what = "Tabelan" if a.package_id == "tabela" else "Reklamın"
+            db.add(Notice(id=uid(), user_id=a.owner_id, kind="ad.ending", ref=a.id,
+                          text=f"{what} yarın bitiyor: “{a.label}”. Tek dokunuşla uzatmak için Reklamlarım › Uzat."[:300]))
+            n += 1
+        return n
+
     def sweep(db: Session) -> dict:
         t = now()
         n = {
             "guide": db.query(GuideBackup).filter(GuideBackup.expires_at <= t).delete(synchronize_session=False),
-            "ads": db.query(AdBooking).filter(AdBooking.ends_at < t - timedelta(days=400)).delete(synchronize_session=False),
+            "remind": remind(db, t),
         }
+        old = [x for (x,) in db.query(AdBooking.id).filter(AdBooking.ends_at < t - timedelta(days=400)).limit(1000).all()]
+        if old:  # istatistik satırları önce (yabancı anahtar)
+            db.query(AdStat).filter(AdStat.ad_id.in_(old)).delete(synchronize_session=False)
+            db.query(AdSeen).filter(AdSeen.ad_id.in_(old)).delete(synchronize_session=False)
+        n["ads"] = db.query(AdBooking).filter(AdBooking.id.in_(old)).delete(synchronize_session=False) if old else 0
         db.commit()
         return n
 
@@ -637,7 +841,7 @@ def make_router(user_out: Callable[[User], dict], test_buy: bool = True) -> APIR
                 print("[hesap] temizlik hatası:", type(e).__name__, flush=True)
 
     r.sweep = sweep  # type: ignore[attr-defined]
-    r.limiters = (doc_win, buy_win, ad_win, guide_win)  # type: ignore[attr-defined]
+    r.limiters = (doc_win, buy_win, ad_win, guide_win, seen_win)  # type: ignore[attr-defined]
     r.rules = rules  # type: ignore[attr-defined]
     r.start_cleaner = lambda: threading.Thread(target=loop, name="account-sweep", daemon=True).start()  # type: ignore[attr-defined]
     return r

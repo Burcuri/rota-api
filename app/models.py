@@ -567,6 +567,18 @@ class Reward(Base):
     created_at = Column(DateTime(timezone=True), default=now, index=True)
 
 
+class RewardPhoto(Base):
+    """1.25.0: ödül ürününün fotoğrafları (en çok 3; kullanıcı kararı 6 Kasım 2026: "3 resimlik foto galeri"). Yalnız ürün fotoğrafı;
+    kişi fotoğrafı yüklenirse yönetim siler. Herkese açık (katalogda oturumsuz <img>), logo gibi base64 saklanır."""
+
+    __tablename__ = "reward_photos"
+    id = Column(String(32), primary_key=True, default=uid)
+    reward_id = Column(String(32), ForeignKey("rewards.id"), nullable=False, index=True)
+    idx = Column(Integer, nullable=False, default=0)  # 0, 1, 2
+    data = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=now, index=True)
+
+
 class RewardClaim(Base):
     """Ödül talebi. Kurye "Al" der → puan BLOKE (defterde −bedel), ödülü koyana bildirim → 7 gün içinde kargolar (firma + takip no) →
     kuryeye "Ürünü aldın mı?" → evet: kapanır (+ 1–5 yıldız memnuniyet) · hayır: yönetime düşer. Süreler: 7 günde kargolanmazsa puan iade;
@@ -666,9 +678,27 @@ class AccountDoc(Base):
     updated_at = Column(DateTime(timezone=True), default=now)
 
 
+class StorePurchase(Base):
+    """1.25.0: mağaza (Google Play / App Store) coin satın alması — makbuz BİR KEZ yazılır (aynı makbuz ikinci kez gelirse coin eklenmez).
+    txn_key: Google'da satın alma jetonunun SHA-256 özeti, Apple'da işlem numarası. Hesap silinince de kalır (muhasebe; kişisel bilgi yok)."""
+
+    __tablename__ = "store_purchases"
+    id = Column(String(32), primary_key=True, default=uid)
+    user_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    store = Column(String(8), nullable=False)  # google | apple
+    txn_key = Column(String(64), nullable=False)
+    order_id = Column(String(120), nullable=False, default="")
+    product_id = Column(String(100), nullable=False, default="")
+    coins = Column(Integer, nullable=False)
+    env = Column(String(16), nullable=False, default="Production")  # Production | Sandbox | Test
+    status = Column(String(16), nullable=False, default="credited")
+    created_at = Column(DateTime(timezone=True), default=now, index=True)
+    __table_args__ = (UniqueConstraint("store", "txn_key", name="uq_store_txn"),)
+
+
 class CoinEntry(Base):
     """Rota coin defteri: bakiye = hareketlerin toplamı. Coin nakde çevrilmez, aktarılmaz, süresi dolmaz (kullanım koşulları › 4. COIN).
-    kind: test (mağaza bağlanana kadar test satın alma) | store (mağaza satın alması, ileride) | ad (harita reklamı) | promote (öne çıkan ilan)
+    kind: test (mağaza bağlanana kadar test satın alma) | store (mağaza satın alması, 1.25.0: app/iap.py) | ad (harita reklamı) | promote (öne çıkan ilan)
     | admin (yönetim düzeltmesi)."""
 
     __tablename__ = "coin_entries"
@@ -701,6 +731,74 @@ class AdBooking(Base):
     removed_at = Column(DateTime(timezone=True))
     removed_by = Column(String(16), nullable=False, default="")  # owner | admin
     created_at = Column(DateTime(timezone=True), default=now)
+    # 1.26.0: "reklamın yarın bitiyor" hatırlatması gönderildi (uzatılınca boşalır, yeni bitişten önce yine gider)
+    reminded_at = Column(DateTime(timezone=True))
+
+
+class AdStat(Base):
+    """1.26.0 REKLAM İSTATİSTİĞİ (gün başına): kuryenin teslim haritasında reklam kaç kez göründü (shows), kaç kez dokunuldu (taps), o gün
+    kaç ayrı kurye gördü (viewers). Reklam verene yalnız SAYILAR gösterilir; hangi kuryenin gördüğü gösterilmez. Gün = Türkiye tarihi."""
+
+    __tablename__ = "ad_stats"
+    ad_id = Column(String(32), ForeignKey("ad_bookings.id"), primary_key=True)
+    day = Column(String(10), primary_key=True)  # 2026-11-07
+    shows = Column(Integer, nullable=False, default=0)
+    taps = Column(Integer, nullable=False, default=0)
+    viewers = Column(Integer, nullable=False, default=0)
+
+
+class AdSeen(Base):
+    """1.26.0: reklamı gören kurye (toplam kaç AYRI kurye gördü sayılsın diye; reklam verene kimlik gösterilmez)"""
+
+    __tablename__ = "ad_seen"
+    ad_id = Column(String(32), ForeignKey("ad_bookings.id"), primary_key=True)
+    user_id = Column(String(32), ForeignKey("users.id"), primary_key=True)
+    last_day = Column(String(10), nullable=False, default="")
+
+
+class Survey(Base):
+    """1.26.0 ANKET (kullanıcı kararı 7 Kasım 2026: "anketler ekranını sunucuya arşivlemeliyiz ve veriyi tutmalıyız"). Soruyu yönetim yazar;
+    kuryeler yanıtlar; işletmeler yalnız ORTALAMAYI görür (en az 3 yanıt). Kapanan anket silinmez, ARŞİVE geçer (yanıtlarıyla)."""
+
+    __tablename__ = "surveys"
+    id = Column(String(32), primary_key=True, default=uid)
+    q = Column(String(200), nullable=False)
+    kind = Column(String(12), nullable=False, default="ucret")  # ucret | saat | sayi
+    unit = Column(String(16), nullable=False, default="₺")
+    min_v = Column(Float, nullable=False, default=1)
+    max_v = Column(Float, nullable=False, default=100000)
+    status = Column(String(10), nullable=False, default="active", index=True)  # active | archived
+    created_by = Column(String(64), nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), default=now)
+    archived_at = Column(DateTime(timezone=True))
+
+
+class SurveyAnswer(Base):
+    """1.26.0: kuryenin anket yanıtı (anket başına tek yanıt; değiştirilebilir). Bölge = yanıt anındaki çalışma bölgesi (il / ilçe)."""
+
+    __tablename__ = "survey_answers"
+    id = Column(String(32), primary_key=True, default=uid)
+    survey_id = Column(String(32), ForeignKey("surveys.id"), nullable=False, index=True)
+    # hesap silinince boşalır: yanıt arşivde ANONİM kalır (ortalama bozulmasın)
+    user_id = Column(String(32), ForeignKey("users.id"), nullable=True, index=True)
+    value = Column(Float, nullable=False)
+    province = Column(String(60), nullable=False, default="")
+    district = Column(String(80), nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), default=now)
+    updated_at = Column(DateTime(timezone=True), default=now)
+    __table_args__ = (UniqueConstraint("survey_id", "user_id", name="uq_survey_answer"),)
+
+
+class BackupRun(Base):
+    """1.26.0 VERİTABANI YEDEĞİ: her yedek alınışının kaydı (dosyanın kendisi burada DEĞİL: GitHub'da ya da yöneticinin bilgisayarında)."""
+
+    __tablename__ = "backup_runs"
+    id = Column(String(32), primary_key=True, default=uid)
+    at = Column(DateTime(timezone=True), default=now, index=True)
+    by = Column(String(16), nullable=False, default="")  # schedule | admin
+    size = Column(Integer, nullable=False, default=0)
+    tables = Column(Integer, nullable=False, default=0)
+    rows = Column(Integer, nullable=False, default=0)
 
 
 class GuideBackup(Base):

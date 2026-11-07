@@ -17,7 +17,7 @@ from sqlalchemy import case
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from . import events
+from . import events, places
 from .auth import (
     DUMMY_HASH,
     AccountBlocked,
@@ -37,12 +37,16 @@ from .geo import sort_packages
 from .doors import make_router as make_doors_router
 from .doormap import make_router as make_doormap_router
 from .admin import make_router as make_admin_router
+from .surveys import make_router as make_surveys_router
+from .backup import make_router as make_backup_router
 from .errors import make_router as make_errors_router
 from .follow import make_router as make_follow_router
 from .tasks import OPEN as TASK_OPEN, end_tasks_for_job, make_router as make_tasks_router, people_of as task_people
 from .logos import logo_version, make_router as make_logos_router
+from .bizcard import make_router as make_bizcard_router
 from .points import make_router as make_points_router
-from .account import PROMO_COIN_PER_DAY, charge as coin_charge, make_router as make_account_router, ms as ms_of
+from .account import PROMO_COIN_PER_DAY, active_tabela, charge as coin_charge, make_router as make_account_router, ms as ms_of
+from .iap import make_router as make_iap_router
 from .marks import make_router as make_marks_router
 from .nearby import make_router as make_nearby_router
 from .vehicle import make_router as make_vehicle_router, withdraw as vehicle_withdraw
@@ -115,6 +119,7 @@ POINT_TL = float(os.getenv("POINT_TL", "0.10"))  # 1 puanın referans değeri (T
 REWARD_VALUE_MIN_RATIO = float(os.getenv("REWARD_VALUE_MIN_RATIO", "0.8"))  # ürün değeri basamağın TL karşılığının en az bu oranı
 REWARD_VALUE_MAX_RATIO = float(os.getenv("REWARD_VALUE_MAX_RATIO", "1.5"))  # … ve en çok bu oranı (3000 puan → 240–450 TL)
 POINTS_EXPIRE_DAYS = float(os.getenv("POINTS_EXPIRE_DAYS", "365"))  # kullanılmayan puan bu kadar gün sonra düşer
+REWARD_BARCODE_DAYS = float(os.getenv("REWARD_BARCODE_DAYS", "30"))  # 1.25.0: ödül barkodu bu kadar gün geçerli; okutulmazsa puan iade
 REWARD_SHIP_DAYS = float(os.getenv("REWARD_SHIP_DAYS", "7"))  # ödülü koyan bu kadar gün içinde kargolar; yoksa puan iade
 REWARD_ANSWER_DAYS = float(os.getenv("REWARD_ANSWER_DAYS", "14"))  # kargodan sonra kurye bu kadar gün cevap vermezse "teslim alındı"
 DELIVERY_PROOF_KEEP_DAYS = float(os.getenv("DELIVERY_PROOF_KEEP_DAYS", "30"))  # teslim doğrulama kayıtları (adres yok) bu kadar gün
@@ -134,6 +139,8 @@ async def lifespan(_app):
     account_router.start_cleaner()  # 1.17.0: 24 saati dolan rehber yedeklerini, çok eski reklam kayıtlarını siler
     push_router.start_cleaner()  # 1.19.0: Expo bildirim biletlerini denetler (cihazı kalmayan jetonu siler)
     threading.Thread(target=_housekeeping_loop, name="housekeeping", daemon=True).start()
+    # 1.22.0: resmi il / ilçe / mahalle listesi (kapı katmanının düzgün yazımı) arka planda yüklenir; ilk kapı bildirimi beklemesin
+    threading.Thread(target=places.data, name="places-load", daemon=True).start()
     yield
 
 
@@ -155,7 +162,7 @@ def _housekeeping_loop():
             print("[temizlik] hata:", type(e).__name__, flush=True)
 
 
-app = FastAPI(title="Rota Asistan", version="1.21.1", lifespan=lifespan)
+app = FastAPI(title="Rota Asistan", version="1.26.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -230,15 +237,21 @@ errors_router = make_errors_router(ERROR_KEEP_DAYS, ERROR_MAX_ROWS, ERROR_DAILY_
 app.include_router(errors_router)
 admin_router = make_admin_router(ERROR_KEEP_DAYS, FOLLOW_KEEP_HOURS)
 app.include_router(make_logos_router(current_user))  # 1.14.1: işletme logosu (profil fotoğrafı yok)
+app.include_router(make_bizcard_router(current_user))  # 1.24.0: işletme kartı (kurye sohbette fotoğrafa dokununca görür)
 points_router = make_points_router(  # 1.15.0: puan defteri (doğrulanmış teslim) + ödül süreci + sistem bildirimleri
     POINTS_DAILY_MAX, POINT_TL, REWARD_VALUE_MIN_RATIO, POINTS_EXPIRE_DAYS, REWARD_SHIP_DAYS, REWARD_ANSWER_DAYS, DELIVERY_PROOF_KEEP_DAYS, NOTICE_KEEP_DAYS,
-    value_max_ratio=REWARD_VALUE_MAX_RATIO,
+    value_max_ratio=REWARD_VALUE_MAX_RATIO, barcode_days=REWARD_BARCODE_DAYS,
 )
 app.include_router(points_router)
 app.include_router(make_marks_router())  # 1.16.0: sponsor karnesi, öne çıkarma, af, kara liste (+ not)
 # 1.17.0: hesap verisi sunucuda tek kaynak (bölümler + eşitleme saati), coin defteri, reklam deposu, öne çıkan ilan, 24 saatlik rehber yedeği
 account_router = make_account_router(lambda u: user_out(u), COIN_TEST_BUY)
 app.include_router(account_router)
+app.include_router(make_iap_router())  # 1.25.0: Google Play / App Store coin satın alması (anahtarlar Render'da; yoksa kapalı)
+surveys_router = make_surveys_router()  # 1.26.0: anketler sunucuda (yönetim yazar, kurye yanıtlar, ortalama ≥3 yanıtla; arşiv silinmez)
+app.include_router(surveys_router)
+backup_router = make_backup_router(app.version)  # 1.26.0: şifreli veritabanı yedeği (gece GitHub Actions + yönetimden indirme; BACKUP_KEY Render'da)
+app.include_router(backup_router)
 # 1.19.0: kurye ve işletme telefonuna bildirim (Expo, ücretsiz) + web ikizinde tarayıcı bildirimi; metinde kişisel bilgi yok
 push_router = make_push_router()
 app.include_router(push_router)
@@ -495,8 +508,18 @@ def pkg_out(p: JobPackage, base: str = "") -> dict:
     }
 
 
-def job_out(j: Job, db: Session, include_packages=False) -> dict:
+def start_shared(db: Session, j: Job, viewer: User | None, cache: dict | None = None) -> bool:
+    """İlanın başlama noktası (ilanı verdiği yer) kime gösterilir? İlan sahibine ve HER KURYEYE.
+    1.24.0 (kullanıcı kararı 6 Kasım 2026): "tabiki işletme konumunu asla saklayamaz bir anlamı yok" — 1.23.0'daki rıza şartı kalktı.
+    Başka işletme ve sponsor görmez; `viewer` verilmezse (eski çağrılar) gösterilmez. (`db`, `cache` eski çağrılarla uyum için duruyor.)"""
+    if viewer is None:
+        return False
+    return viewer.id == j.employer_id or viewer.active_role == "courier"
+
+
+def job_out(j: Job, db: Session, include_packages=False, viewer: User | None = None, share_cache: dict | None = None) -> dict:
     base = PUBLIC_BASE
+    shared = start_shared(db, j, viewer, share_cache)
     pkgs = list(j.packages)
     if include_packages:
         pkgs = sort_packages(pkgs, j.employer_lat, j.employer_lon)
@@ -511,15 +534,22 @@ def job_out(j: Job, db: Session, include_packages=False) -> dict:
 
     def business(u: User | None) -> dict | None:
         # 1.14.1: işletmenin logosu (sürüm; resim /v1/logo/{id} adresinden). Kişilerde fotoğraf yok.
-        return {"id": u.id, "name": u.name, "logo": logo_version(u)} if u else None
+        # 1.26.0: tabelası yayında mı (ilan listesinde 🪧 ve öne çıkanlardan hemen sonra)
+        if u is None:
+            return None
+        tab = share_cache.setdefault("_tabela", {}) if share_cache is not None else {}
+        if u.id not in tab:
+            tab[u.id] = active_tabela(db, u.id) is not None
+        return {"id": u.id, "name": u.name, "logo": logo_version(u), "tabela": tab[u.id]}
 
     return {
         "id": j.id,
         "title": j.title,
         "note": j.note,
         "status": j.status,
-        "employerLat": j.employer_lat,
-        "employerLon": j.employer_lon,
+        "employerLat": j.employer_lat if shared else None,
+        "employerLon": j.employer_lon if shared else None,
+        "startShared": shared,
         "packageCount": j.package_count or len(j.packages),
         "area": j.area or "",
         "fee": j.fee,
@@ -834,6 +864,8 @@ def set_findable(body: FindableIn, user: User = Depends(current_user), db: Sessi
 def contacts_match(body: MatchIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
     """Rehberdeki / yazılan numaralardan hangileri ROTA üyesi? Numaralar SAKLANMAZ, günlüğe yazılmaz; yalnız eşleşenin
     kimliği, adı ve rolü döner. "Bulunabilirim" kapalıysa ve yasaklıysa dönmez. Sıkı hız sınırı vardır (numara tarama kötüye kullanımı)."""
+    if user.active_role == "sponsor":  # 1.23.0: sponsorda mesajlaşma yok; kişi bulma da yok
+        raise HTTPException(403, "Sponsor hesabında mesajlaşma yok")
     if not contact_match.allow(user.id):
         raise HTTPException(429, "Çok sık arama yaptın, biraz sonra tekrar dene")
     nums: list[str] = []
@@ -852,7 +884,7 @@ def contacts_match(body: MatchIn, user: User = Depends(current_user), db: Sessio
     out = [
         {"id": u.id, "name": u.name, "role": u.active_role, "phone": u.phone}
         for u in rows
-        if u.findable is not False and not u.banned
+        if u.findable is not False and not u.banned and u.active_role != "sponsor"  # 1.23.0: sponsorla mesajlaşılmaz
     ]
     return {"matches": out, "checked": len(nums)}
 
@@ -974,7 +1006,7 @@ def create_job(body: JobIn, user: User = Depends(current_user), db: Session = De
     push_queue_job_area(db, user, job.area or "")
     db.commit()
     db.refresh(job)
-    return job_out(job, db, include_packages=ESKI_AKIS)
+    return job_out(job, db, include_packages=ESKI_AKIS, viewer=user)
 
 
 @app.delete("/v1/jobs/{job_id}")
@@ -1007,7 +1039,8 @@ def open_jobs(user: User = Depends(current_user), db: Session = Depends(get_db))
         .limit(80)
         .all()
     )
-    return [job_out(j, db) for j in rows]
+    cache: dict = {}
+    return [job_out(j, db, viewer=user, share_cache=cache) for j in rows]
 
 
 @app.get("/v1/jobs/mine")
@@ -1028,7 +1061,7 @@ def my_jobs(user: User = Depends(current_user), db: Session = Depends(get_db)):
                 return None
             c = people.get(t.courier_id) or {"id": t.courier_id, "name": "", "userNo": "", "icon": ""}
             return {"taskNo": t.task_no, "status": t.status, "endReason": t.end_reason or "", "courier": c}
-        return [{**job_out(j, db), "task": task_brief(pick.get(j.id))} for j in rows]
+        return [{**job_out(j, db, viewer=user), "task": task_brief(pick.get(j.id))} for j in rows]
     else:
         rows = (
             db.query(Job)
@@ -1036,7 +1069,8 @@ def my_jobs(user: User = Depends(current_user), db: Session = Depends(get_db)):
             .order_by(Job.created_at.desc())
             .all()
         )
-    return [job_out(j, db) for j in rows]
+    cache: dict = {}
+    return [job_out(j, db, viewer=user, share_cache=cache) for j in rows]
 
 
 @app.get("/v1/jobs/{job_id}")
@@ -1049,7 +1083,7 @@ def get_job(job_id: str, user: User = Depends(current_user), db: Session = Depen
     show_pkgs = user.id in (job.employer_id, job.courier_id) and job.status in ("accepted", "departed", "done")
     if user.id == job.employer_id:
         show_pkgs = True
-    out = job_out(job, db, include_packages=show_pkgs)
+    out = job_out(job, db, include_packages=show_pkgs, viewer=user)
     if not detail:
         out["note"] = ""
     return out
@@ -1069,7 +1103,7 @@ def apply_job(job_id: str, user: User = Depends(current_user), db: Session = Dep
     job.status = "applied"
     user.active_role = "courier"
     db.commit()
-    return job_out(job, db)
+    return job_out(job, db, viewer=user)
 
 
 @app.post("/v1/jobs/{job_id}/accept")
@@ -1087,7 +1121,7 @@ def accept_job(job_id: str, user: User = Depends(current_user), db: Session = De
     job.accepted_at = datetime.now(timezone.utc)
     sort_packages(list(job.packages), job.employer_lat, job.employer_lon)
     db.commit()
-    return job_out(job, db, include_packages=True)
+    return job_out(job, db, include_packages=True, viewer=user)
 
 
 @app.post("/v1/jobs/{job_id}/depart")
@@ -1106,7 +1140,7 @@ def depart_job(job_id: str, user: User = Depends(current_user), db: Session = De
     db.commit()
     base = PUBLIC_BASE
     links = [pkg_out(p, base) for p in sort_packages(list(job.packages), job.employer_lat, job.employer_lon)]
-    return {"job": job_out(job, db, include_packages=True), "smsReady": False, "links": links}
+    return {"job": job_out(job, db, include_packages=True, viewer=user), "smsReady": False, "links": links}
 
 
 @app.get("/v1/me/pin-updates")

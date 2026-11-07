@@ -60,13 +60,22 @@ KINDS: dict[str, tuple[str, str, int]] = {
     "recipient_pin": ("delivery", "📍 Alıcı kapının yerini işaretledi", 120),
     "delivered": ("delivery", "✅ Bir paket teslim edildi", 120),
     "notice": ("notice", "🔔 Yeni bir bildiriminiz var", 30),
+    # 1.25.0 (kullanıcı isteği 6 Kasım 2026: "sponsorun telefonuna bildirim gitmeli"): ödül duyuruları kendi metniyle (kişisel bilgi yok)
+    "reward_won": ("notice", "🎁 Bir kurye ödül ürününüzü hak etti — gelince barkodunu okutun", 30),
+    "reward_given": ("notice", "🎁 Barkodun okutuldu — ürünü aldıysan “Teslim aldım” de", 30),
+    # 1.26.0: reklam / tabela bitişine 1 gün kala (reklam adı yazmaz; dokununca Reklamlarım)
+    "ad_ending": ("notice", "📍 Reklamın yarın bitiyor — Reklamlarım'dan tek dokunuşla uzatabilirsin", 30),
     "test": ("test", "🔔 Bildirimler açık. Bu bir deneme bildirimidir.", 0),
 }
 TITLE = "Rota"
 # Tıklanınca uygulamada açılacak yer (istemci karar verir; burada yalnız tür gider)
 GROUP_OF = {"msg": "msg", "nudge": "msg", "task_shared": "msg", "task_accepted": "msg", "task_declined": "msg", "follow_ask": "msg",
             "follow_ok": "msg", "job_new": "job", "recipient_ok": "delivery", "recipient_pin": "delivery", "delivered": "delivery",
-            "notice": "notice", "test": "test"}
+            "notice": "notice", "reward_won": "notice", "reward_given": "notice", "ad_ending": "notice", "test": "test"}
+# Duyuru türü → bildirim türü (yoksa genel "🔔 Yeni bir bildiriminiz var"). Dokununca yine duyuru gibi açılır (t = "notice").
+NOTICE_PUSH = {"reward.claimed": "reward_won", "reward.given": "reward_given", "ad.ending": "ad_ending"}
+# Uygulamada t'nin yanında k'ye (alt tür) göre AYRI ekran açan bildirimler (web ikizinin adresine de &k= yazılır)
+SUB_ROUTED = {"ad_ending"}
 
 # ---------------------------------------------------------------------------------------------------- resmî tatiller (Türkiye)
 # Sabit günler her yıl; dini bayramlar Diyanet takvimine göre yıl yıl (arife: öğleden sonra, 13.00'ten).
@@ -169,7 +178,7 @@ def _notice_added(_mapper, _conn, target):
     """Her sistem duyurusu (🔔: ödül, coin, reklam, yönetim) telefona da bildirim olarak gider."""
     s = object_session(target)
     if s is not None:
-        queue(s, target.user_id, "notice", "notice")
+        queue(s, target.user_id, NOTICE_PUSH.get(target.kind or "", "notice"), "notice")
 
 
 # ---------------------------------------------------------------------------------------------------- gönderim
@@ -267,7 +276,11 @@ def _send_batch(items: list[tuple[str, str, str]]) -> None:
                                       "channelId": "default", "ttl": 6 * 3600})
                     expo_rows.append(row)
                 elif row.kind == "web":
-                    web_jobs.append((row, {"title": TITLE, "body": text, "url": "/web/?push=" + data["t"], "tag": "rota-" + data["t"], "t": data["t"]}))
+                    payload = {"title": TITLE, "body": text, "url": "/web/?push=" + data["t"], "tag": "rota-" + data["t"], "t": data["t"]}
+                    if kind in SUB_ROUTED:  # 1.26.0: dokununca kendi ekranı açılsın ("Reklamın yarın bitiyor" → Reklamlarım)
+                        payload["url"] += "&k=" + kind
+                        payload["k"] = kind
+                    web_jobs.append((row, payload))
         # Expo: en çok 100'lük paketler; bilet hatası "DeviceNotRegistered" ise kayıt silinir
         for i in range(0, len(expo_msgs), 100):
             chunk, rows = expo_msgs[i:i + 100], expo_rows[i:i + 100]

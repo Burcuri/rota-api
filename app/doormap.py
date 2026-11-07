@@ -24,6 +24,7 @@ from fastapi.responses import Response
 from sqlalchemy import and_, case, func, not_
 from sqlalchemy.orm import Session
 
+from . import places
 from .admin import audit, current_admin
 from .db import get_db
 from .models import Admin, DoorPoint, DoorReport, now
@@ -34,6 +35,8 @@ _KEY = re.compile(r"^[a-z0-9 ]{0,120}$")  # anahtarlar katmandaki gibi: küçük
 
 def _key(v: str, name: str) -> str:
     v = (v or "").strip()
+    if name == "il" and v == "-":  # 1.22.0: ili belirsiz noktalar (ilçe resmi listede bulunamadı)
+        return v
     if not _KEY.match(v):
         raise HTTPException(400, f"Geçersiz {name}")
     return v
@@ -65,7 +68,7 @@ def make_router(trust_score: float = 2.0) -> APIRouter:
     def filtered(db: Session, p: str = "", d: str = "", n: str = "", s: str = "", k: str = "", status: str = ""):
         q = db.query(P)
         if p:
-            q = q.filter(P.province_k == p)
+            q = q.filter(P.province_k == ("" if p == "-" else p))
         if d:
             q = q.filter(P.district_k == d)
         if n:
@@ -94,12 +97,16 @@ def make_router(trust_score: float = 2.0) -> APIRouter:
 
     @r.get("/v1/admin/doors/summary")
     def summary(p: str = "", d: str = "", n: str = "", a: Admin = Depends(current_admin), db: Session = Depends(get_db)):
-        """Kırılım: ilçe yoksa ilçeler, ilçe varsa mahalleler, mahalle varsa sokaklar. Her satırda sayılar + harita için merkez."""
+        """Kırılım (1.22.0): Türkiye › il › ilçe › mahalle › sokak. İl yoksa iller, il varsa ilçeler, ilçe varsa mahalleler, mahalle
+        varsa sokaklar. Her satırda sayılar + harita için merkez + işaretler (resmi listede mi, konum ilden çok uzak mı)."""
         p, d, n = _key(p, "il"), _key(d, "ilçe"), _key(n, "mahalle")
         tot = db.query(*count_cols()).select_from(P).one()
         week = db.query(func.count(P.id)).filter(P.created_at >= now() - timedelta(days=7)).scalar() or 0
         totals = {"total": tot[0], "verified": int(tot[1]), "pending": int(tot[2]), "disputed": int(tot[3]), "hidden": int(tot[4]), "new7d": week}
-        if not d:
+        if not p and not d:
+            level, cols = "province", (P.province_k,)
+            names = (func.max(P.province),)
+        elif not d:
             level, cols = "district", (P.province_k, P.district_k)
             names = (func.max(P.province), func.max(P.district))
         elif not n:
@@ -119,13 +126,15 @@ def make_router(trust_score: float = 2.0) -> APIRouter:
         for row in rows:
             keys, nm, c, rest = row[:nc], row[nc:nc + nn], row[nc + nn:nc + nn + 5], row[nc + nn + 5:]
             it = {
-                "p": keys[0], "d": keys[1], "n": keys[2] if nc > 2 else "", "s": keys[3] if nc > 3 else "", "k": keys[4] if nc > 4 else "",
-                "province": nm[0] or "", "district": nm[1] or "", "neighborhood": nm[2] if nn > 2 else "", "street": nm[3] if nn > 3 else "",
+                "p": keys[0] or "-", "d": keys[1] if nc > 1 else "", "n": keys[2] if nc > 2 else "", "s": keys[3] if nc > 3 else "", "k": keys[4] if nc > 4 else "",
+                "province": nm[0] or "", "district": nm[1] if nn > 1 else "", "neighborhood": nm[2] if nn > 2 else "", "street": nm[3] if nn > 3 else "",
                 "total": c[0], "verified": int(c[1]), "pending": int(c[2]), "disputed": int(c[3]), "hidden": int(c[4]),
                 "lat": round(rest[0], 6) if rest[0] is not None else None, "lon": round(rest[1], 6) if rest[1] is not None else None,
                 "updated": rest[2].isoformat() if rest[2] else None, "doors": rest[3],
             }
-            it["name"] = {"district": it["district"], "neighborhood": it["neighborhood"], "street": it["street"]}[level] or "(adsız)"
+            it["name"] = {"province": it["province"] or "(il belirsiz)", "district": it["district"], "neighborhood": it["neighborhood"], "street": it["street"]}[level] or "(adsız)"
+            # İşaretler: il / ilçe / mahalle resmi listede mi; noktaların ortası ilin merkezinden 250 km'den uzak mı
+            it.update(places.flags(level, keys[0], it["d"], it["n"], it["lat"], it["lon"]))
             items.append(it)
         items.sort(key=lambda x: (-x["verified"], -x["total"], x["name"]))
         return {"level": level, "totals": totals, "items": items[:500], "more": max(0, len(items) - 500)}
