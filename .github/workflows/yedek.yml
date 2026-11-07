@@ -1,0 +1,56 @@
+# Rota — her gece veritabanı yedeği (1.26.0). Sunucu yedeği ŞİFRELİ verir; GitHub 30 gün saklar (Actions › bu iş › Artifacts).
+# Gerekli: depo › Settings › Secrets and variables › Actions › New repository secret › BACKUP_KEY (Render'daki BACKUP_KEY ile AYNI).
+# Sunucu adresi başka ise: aynı yerde Variables › SERVER_URL (keepalive ile aynı). Elle çalıştırmak için: Actions › Veritabanı yedeği › Run workflow.
+name: Veritabanı yedeği
+
+on:
+  schedule:
+    - cron: "17 0 * * *"  # her gece 03:17 (Türkiye saati)
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  yedek:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ROTA_URL: ${{ vars.SERVER_URL || 'https://rota-sunucu.onrender.com' }}
+    steps:
+      - name: Sunucuyu uyandır (ücretsiz Render uykudaysa 1 dakika sürer)
+        run: |
+          for i in $(seq 1 10); do
+            if curl -fsS --max-time 60 "$ROTA_URL/health" > /dev/null; then echo "sunucu hazır"; exit 0; fi
+            sleep 15
+          done
+          echo "sunucu yanıt vermedi" >&2
+          exit 1
+
+      - name: Yedeği al
+        env:
+          BACKUP_KEY: ${{ secrets.BACKUP_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BACKUP_KEY}" ]; then echo "BACKUP_KEY secret'ı yok (Settings › Secrets and variables › Actions)" >&2; exit 1; fi
+          name="rota-yedek-$(TZ=Europe/Istanbul date +%Y-%m-%d-%H%M).rotayedek"
+          for i in 1 2 3; do
+            code=$(curl -sS --max-time 900 -X POST -H "X-Backup-Key: ${BACKUP_KEY}" -o "$name" -w "%{http_code}" "$ROTA_URL/v1/backup/run" || echo 000)
+            if [ "$code" = "200" ]; then break; fi
+            echo "deneme $i: HTTP $code" >&2
+            if [ "$code" = "403" ] || [ "$code" = "503" ]; then cat "$name" >&2 || true; exit 1; fi
+            sleep 30
+          done
+          [ "$code" = "200" ] || exit 1
+          [ "$(head -c 8 "$name")" = "ROTAYDK1" ] || { echo "dosya Rota yedeği değil" >&2; exit 1; }
+          ls -l "$name"
+          echo "NAME=$name" >> "$GITHUB_ENV"
+
+      - name: Yedeği sakla (30 gün)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.NAME }}
+          path: ${{ env.NAME }}
+          retention-days: 30
+          if-no-files-found: error
+          compression-level: 0
