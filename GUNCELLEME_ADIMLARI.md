@@ -1,3 +1,148 @@
+# Sunucu güncellemesi — Dilim 36 · reklam (tabela, istatistik, uzat, logolu işaret, fiyatlar ÷10), anketler sunucuda, veritabanı yedeği (7 Kasım 2026) — sunucu 1.26.0
+
+**Dilim 35'i yüklediysen aşağıdakiler yeter** (bu zip öncekilerin hepsini içerir). **Beş YENİ tablo** (`ad_stats`, `ad_seen`, `surveys`,
+`survey_answers`, `backup_runs`) ve `ad_bookings` tablosuna bir YENİ sütun (`reminded_at`) sunucu açılırken kendiliğinden kurulur; eski
+kayıtlara dokunulmaz. Yeni paket YOK. Ayrıntı: uygulama paketindeki `docs/DILIM-36.md`.
+- **`app/account.py`**: FİYATLAR (1 coin ≈ 10 TL; harita reklamı nokta·gün 3 coin, öne çıkan ilan günü 2 coin, TABELA ayda 1 coin) · TABELA
+  (işletme: İşletme Profili'ndeki konum, sponsor: bir kez seçilen yer; aynı anda tek) · **Uzat** (`POST /v1/ads/{id}/extend`) · **istatistik**
+  (`POST /v1/ads/seen`; yalnız sayı) · bitişe 1 gün kala **hatırlatma** · kuryenin haritasında **logo** · ilan listesinde 🪧.
+- **`app/surveys.py`** (YENİ): anketler sunucuda — yönetim açar / arşive alır (silinmez), kurye yanıtlar, ortalama en az 3 yanıtla, ilçe
+  ortalaması, CSV'de kişi yok. **`app/backup.py`, `app/backup_core.py`, `app/restore.py`** (YENİ): şifreli veritabanı yedeği + geri yükleme.
+- **`app/pushes.py`** ("📍 Reklamın yarın bitiyor"), **`app/models.py`**, **`app/migrate.py`**, **`app/main.py`** (sürüm 1.26.0),
+  **`app/security.py`** (hesap silinince reklam sayıları / anket yanıtı adsız kalır).
+- **`app/static/yonetim.js`**: **Anketler** sekmesi, Özet'te **Veritabanı yedeği** kutusu, Reklamlar'da tür + görülme sayısı.
+  **`app/static/web-sw.js`**: bildirime dokununca doğru ekran. **`app/webapp/`** (web ikizi 0.32.0).
+
+**Yapılacak (GitHub `Burcuri/rota-api`):**
+1. `app` klasörüne gir → `webapp` klasörünü sil (⋯ → *Delete directory*) → Commit.
+2. Yine `app` klasöründeyken **Add file → Upload files** → zip'teki `app/webapp` ve `app/static` klasörlerini ve `app/account.py`,
+   `app/backup.py`, `app/backup_core.py`, `app/main.py`, `app/migrate.py`, `app/models.py`, `app/pushes.py`, `app/restore.py`,
+   `app/security.py`, `app/surveys.py` dosyalarını birlikte sürükle → Commit. (Bu yükleme 65 dosya, sınır 100.)
+3. `tests` klasörüne gir → **Upload files** → zip'teki `tests/test_account.py`, `tests/test_ads_extra.py`, `tests/test_backup.py`,
+   `tests/test_logos.py`, `tests/test_pushes.py`, `tests/test_relay_jobs.py`, `tests/test_surveys.py` → Commit.
+4. **Gece yedeği işi:** ana klasörde **Add file → Create new file** → ad kutusuna `.github/workflows/yedek.yml` yaz → zip'teki aynı
+   dosyanın içeriğini yapıştır → Commit. (Windows'ta `.github` gizli görünebilir: Gezgin › Görünüm › Göster › Gizli öğeler.)
+5. Ana klasöre dön → **Upload files** → zip'teki `GUNCELLEME_ADIMLARI.md` → Commit.
+6. **Yedek anahtarı (bir kez):** Render › **rota-sunucu** › **Environment** › *Add Environment Variable* → Key: `BACKUP_KEY` → **Generate**
+   → *Save Changes*. Sonra değeri göz simgesiyle aç, kopyala → GitHub › rota-api › **Settings › Secrets and variables › Actions** →
+   **New repository secret** → Name: `BACKUP_KEY`, Secret: yapıştır → *Add secret*. Anahtar zip'e, koda, sohbete yazılmaz. Anahtarsız yedek
+   açılamaz: değeri ayrıca güvenli bir yere (parola yöneticisi) de not et.
+7. Render › **Manual Deploy → Deploy latest commit** → **Live** olunca:
+   - yönetim › Özet › **Veritabanı yedeği** › *Şimdi yedek indir* → `rota-yedek-….rotayedek` iner (şifreli);
+   - GitHub › **Actions** › **Veritabanı yedeği** › *Run workflow* → yeşil ✓ → işin sayfasında altta **Artifacts**: yedek dosyası (30 gün durur).
+     Sonra her gece 03:17'de kendiliğinden alınır; yönetimde "Son gece yedeği" yazar (36 saati geçerse uyarır).
+- **Geri yükleme (gerekirse; bugün gerekmez):** yeni BOŞ bir veritabanı aç (ör. yeni Supabase projesi). Bilgisayarda sunucu klasöründe:
+  `pip install -r requirements.txt`, sonra ortamda `BACKUP_KEY` (Render'daki değer) ve `DATABASE_URL` (YENİ veritabanının adresi) varken
+  `python -m app.restore rota-yedek-….rotayedek --check` (yalnız açar, sayıları yazar) → `python -m app.restore rota-yedek-….rotayedek`
+  (boş veritabanına yazar; dolu veritabanına yazmaz) → Render'daki `DATABASE_URL`'i yenisiyle değiştir. Kapı arşivi dahil her şey içindedir.
+- **İsteğe bağlı:** sunucu adresi farklıysa GitHub › Settings › Secrets and variables › Actions › **Variables** › `SERVER_URL` (keepalive ile aynı).
+
+---
+
+# Sunucu güncellemesi — Dilim 35 · ödül kataloğu + barkod, grup haritası, sponsora bildirim, mağaza satın alması (6 Kasım 2026) — sunucu 1.25.0
+
+**Dilim 34'ü yüklediysen aşağıdakiler yeter** (bu zip öncekilerin hepsini içerir). **İki YENİ tablo** (`reward_photos`, `store_purchases`)
+sunucu açılırken kendiliğinden kurulur; eski tablolara dokunulmaz. Yeni paket YOK. Ayrıntı: uygulama paketindeki `docs/DILIM-35.md`.
+- **`app/points.py`**: KARGO KALKTI (kullanıcı kararı "Yalnız barkod"). Kurye ürünü alınca barkod (30 gün geçerli) → ödülü koyana bildirim →
+  `POST /v1/rewards/redeem` ile okutulur (önce `check` ile gösterir, sonra verir; TEK KULLANIMLIK) → kurye "Teslim aldım" + yıldız.
+  Okutulmayan barkodda puan iade. Ürün başına 3 fotoğraf (`/v1/rewards/{id}/photos/{0-2}`); yönetim fotoğrafı silebilir.
+- **`app/iap.py`** (YENİ): Rota coin Google Play / App Store satın alması — makbuz mağazanın sunucusundan doğrulanır, coin BİR KEZ yazılır.
+  Mağaza anahtarları yoksa kapalı (bugünkü durum); test satın alma sürer.
+- **`app/pushes.py`**: sponsorun telefonuna "🎁 Bir kurye ödül ürününüzü hak etti"; kuryeye "🎁 Barkodun okutuldu". **`app/relay.py`**: grup
+  haritası noktası sessiz gider (bildirim yok). **`app/models.py`**: iki yeni tablo. **`app/main.py`**: sürüm 1.25.0.
+  **`app/security.py`**, **`app/standing.py`**: kargo yerine barkod metinleri.
+- **`app/static/yonetim.js`**: talep durumları barkodla; **Logolar ve fotoğraflar** sekmesinde ödül fotoğrafları + "Fotoğrafı sil"; üye
+  sayfasında kuryeye **Kurye puanı** + "Puan düzelt" (destek ve ödül kataloğunu denemek için).
+- **`app/webapp/`** (web ikizi 0.31.0): ödül kataloğu (sarı / lacivert, barkod), 📷 Barkod okut, grup haritası, sponsora bildirim.
+
+**Yapılacak (GitHub `Burcuri/rota-api`):**
+1. `app` klasörüne gir → `webapp` klasörünü sil (⋯ → *Delete directory*) → Commit.
+2. Yine `app` klasöründeyken **Add file → Upload files** → zip'teki `app/webapp` ve `app/static` klasörlerini ve `app/iap.py`, `app/main.py`,
+   `app/models.py`, `app/points.py`, `app/pushes.py`, `app/relay.py`, `app/security.py`, `app/standing.py` dosyalarını birlikte sürükle →
+   Commit. (Bu yükleme 62 dosya, sınır 100.)
+3. `tests` klasörüne gir → **Upload files** → zip'teki `tests/test_iap.py`, `tests/test_points.py`, `tests/test_pushes.py`,
+   `tests/test_standing.py` → Commit.
+4. Ana klasöre dön → **Upload files** → zip'teki `GUNCELLEME_ADIMLARI.md` → Commit.
+5. Render › **rota-sunucu** › **Manual Deploy → Deploy latest commit** → **Live** olunca: yönetim › Üyeler › bir kurye › **Puan düzelt**
+   +1000 → o kuryeyle Hesabım › Puan ve rozetler › 🎁 kartı: sarı ürün görünüyor mu.
+- **İsteğe bağlı ortam değişkeni:** `REWARD_BARCODE_DAYS` (barkodun geçerlilik günü; yoksa 30).
+- **Mağaza hesapları açılınca (bugün YOK):** Render › Environment: `GOOGLE_PLAY_SERVICE_ACCOUNT` (hizmet hesabının JSON anahtarı) ·
+  `APPLE_IAP_ISSUER_ID`, `APPLE_IAP_KEY_ID`, `APPLE_IAP_PRIVATE_KEY` (.p8 içeriği). Ürün kimlikleri: `rota_coin_50`, `rota_coin_200`,
+  `rota_coin_500` (tüketilebilir). Gerçek satışa geçince `COIN_TEST_BUY=0`. Bu anahtarlar zip'e, GitHub'a, sohbete konmaz.
+
+---
+
+# Sunucu güncellemesi — Dilim 34 · işletme kartı, işletme konumu her kuryeye (6 Kasım 2026) — sunucu 1.24.0
+
+**Dilim 33'ü yüklediysen aşağıdakiler yeter** (bu zip öncekilerin hepsini içerir). Yeni tablo, sütun, paket, anahtar YOK; veritabanına
+dokunulmaz. Ayrıntı: uygulama paketindeki `docs/DILIM-34.md`.
+- **`app/bizcard.py`** (YENİ): `GET /v1/businesses/{id}` — işletme kartı (İşletme Profili'nde yazanlar; vergi bilgileri YOK; telefon,
+  işletme kapattıysa yok). Kuryeler ve işletmenin kendisi görür. Kullanıcı kararı: "kuryeyle yazışmaya başlar başlamaz kurye işletmenin
+  bilgilerini profilinde yazanları fotoğrafa tıklayarak görebilmeli."
+- **`app/main.py`** (sürüm 1.24.0): ilanın başlama noktası her kuryeye gider ("işletme konumunu asla saklayamaz"); kart ucu bağlandı.
+- **`app/static/yonetim.js`**: rıza satırı "Grup konumu (yalnız kurye; işletme konumu her zaman görünür)".
+- **`app/webapp/`** (web ikizi 0.30.0): sohbette işletmenin fotoğrafı → işletme kartı; işletmede konum seçimi yerine bilgi notu.
+
+**Yapılacak (GitHub `Burcuri/rota-api`):**
+1. `app` klasörüne gir → `webapp` klasörünü sil (⋯ → *Delete directory*) → Commit.
+2. Yine `app` klasöründeyken **Add file → Upload files** → zip'teki `app/webapp` ve `app/static` klasörlerini ve `app/bizcard.py`,
+   `app/main.py` dosyalarını birlikte sürükle → Commit. (Bu yükleme 56 dosya, sınır 100.)
+3. `tests` klasörüne gir → **Upload files** → zip'teki `tests/test_roles.py` → Commit.
+4. Ana klasöre dön → **Upload files** → zip'teki `GUNCELLEME_ADIMLARI.md` → Commit.
+5. Render › **rota-sunucu** › **Manual Deploy → Deploy latest commit** → **Live** olunca kurye hesabıyla bir işletmeye "Mesaj gönder" de,
+   sohbetin üstündeki fotoğrafa dokun: işletme kartı açılıyor mu.
+
+---
+
+# Sunucu güncellemesi — Dilim 33 · işletme ve sponsor kuralları (3 Kasım 2026) — sunucu 1.23.0
+
+**Dilim 32'yi yüklediysen aşağıdakiler yeter** (bu zip öncekilerin hepsini içerir). Yeni tablo, sütun, paket, anahtar YOK; veritabanına
+dokunulmaz. Ayrıntı: uygulama paketindeki `docs/DILIM-33.md`.
+- **`app/main.py`** (sürüm 1.23.0): ilanın **başlama noktası** (ilanın verildiği yer) kuryeye yalnız işletme "Konumumu kuryeler görsün"
+  dediyse gider (rıza günlüğündeki son kayıt); ilan sahibi hep görür, başka işletme ve sponsor görmez. Eskiden her ilanda herkese
+  gidiyordu. Sponsor kişilerden numarayla bulunamaz ve kişi araması yapamaz.
+- **`app/relay.py`**: sponsor mesaj gönderemez, sponsora mesaj gönderilemez (grupta sponsor varsa o kişi atlanır). Kullanıcı kararı:
+  "Grup chat ve yazışmaları da sponsora kapatalım."
+- **`app/static/yonetim.js`**: üye ayrıntısında rıza satırı "Konum paylaşımı (kuryede grup arkadaşları, işletmede kuryeler)".
+- **`app/webapp/`** (web ikizi 0.29.0): işletmede 📍 Reklamlarım + ROTA COİN sayacı → coin ekranı, rolüne göre metinler, sponsorda yalnız
+  sesle yazma.
+
+**Yapılacak (GitHub `Burcuri/rota-api`):**
+1. `app` klasörüne gir → `webapp` klasörünü sil (⋯ → *Delete directory*) → Commit.
+2. Yine `app` klasöründeyken **Add file → Upload files** → zip'teki `app/webapp` ve `app/static` klasörlerini ve `app/main.py`,
+   `app/relay.py` dosyalarını birlikte sürükle → Commit. (Bu yükleme 56 dosya, sınır 100.)
+3. `tests` klasörüne gir → **Upload files** → zip'teki `tests/test_roles.py` → Commit.
+4. Ana klasöre dön → **Upload files** → zip'teki `GUNCELLEME_ADIMLARI.md` → Commit.
+5. Render › **rota-sunucu** › **Manual Deploy → Deploy latest commit** → **Live** olunca web ikizinde işletme hesabıyla Hesabım'a bak:
+   üstte 📍 Reklamlarım, ROTA COİN sayacına dokununca coin ekranı açılıyor mu.
+
+---
+
+# Sunucu güncellemesi — Dilim 32 · kapı arşivi Türkiye geneli (3 Kasım 2026) — sunucu 1.22.0
+
+**Dilim 31'i yüklediysen aşağıdakiler yeter** (bu zip öncekilerin hepsini içerir). Yeni tablo, sütun, paket, anahtar YOK; veritabanına
+dokunulmaz. Ayrıntı: uygulama paketindeki `docs/DILIM-32.md`.
+- **Yeni `app/places.py` + `app/data/`** (resmi liste: 81 il, 973 ilçe, ~32 bin mahalle, ~18 bin köy — TürkiyeAPI 2025, kaynak TÜİK;
+  MIT lisansı `app/data/TURKIYEAPI-LICENSE.txt`). Kapı haritasına gelen her kayıt düzgün yazılır: il / ilçe / mahalle RESMİ adla
+  ("alanya" → "Alanya", "kestel mah." → "Kestel Mahallesi"; il yazılmamışsa ilçeden bulunur; "Alanya/Antalya" ayrılır), yol / site /
+  kapı no düzgün ("atatürk cad." → "Atatürk Caddesi", "güneş sit." → "Güneş Sitesi", "12 D:3" → 12). Alıcı pininde iki yol birden
+  yazılmışsa ("Barbaros Cad., Gül Sk.") kapı en özel yola yazılır.
+- **`app/doors.py`, `app/doormap.py`, `app/main.py`** (sürüm 1.22.0). Yönetim › Kapı haritası: **Türkiye › İl › İlçe › Mahalle › Sokak**;
+  resmi listede olmayan il / ilçe / mahalle ve ilinden çok uzak konum "⚠" ile işaretli.
+- **`app/static/yonetim.js`, `yonetim.css`**: il düzeyi, işaretler, yakınlaşınca kapı numaraları haritada yazılı.
+- **`app/webapp/`** (web ikizi 0.28.0): teslimde "Kapı haritasına yazıldı: … " satırı.
+
+**Yapılacak (GitHub `Burcuri/rota-api`):**
+1. `app` klasörüne gir → `webapp` klasörünü sil (⋯ → *Delete directory*) → Commit.
+2. Yine `app` klasöründeyken **Add file → Upload files** → zip'teki `app/webapp`, `app/static`, `app/data` klasörlerini ve `app/places.py`,
+   `app/doors.py`, `app/doormap.py`, `app/main.py` dosyalarını birlikte sürükle → Commit. (Bu yükleme 60 dosya, sınır 100.)
+3. `tests` klasörüne gir → **Upload files** → zip'teki `tests/test_places.py` ve `tests/test_doormap.py` → Commit.
+4. Ana klasöre dön → **Upload files** → zip'teki `GUNCELLEME_ADIMLARI.md` → Commit.
+5. Render › **rota-sunucu** › **Manual Deploy → Deploy latest commit** → **Live** olunca `https://rota-sunucu.onrender.com/yonetim` ›
+   **Kapı haritası**: üstte "Türkiye", altında "İller" listesi görünüyor mu bak (kapı noktası yoksa liste boş, "henüz kapı noktası yok" yazar).
+
+---
+
 # Sunucu güncellemesi — Dilim 31 · büyük harf kuralı, web ikizi 0.27.1 (2 Kasım 2026) — sunucu 1.21.1 (Python aynı)
 
 **Dilim 30'u yüklediysen yalnız iki klasör yeter** (bu zip öncekilerin hepsini içerir). Python, tablo, paket, anahtar değişmedi.

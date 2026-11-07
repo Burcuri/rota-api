@@ -44,7 +44,7 @@ def test_employer_uploads_logo_and_couriers_see_it_on_the_job_card():
     j = client.post("/v1/jobs", json={"title": "Pide", "lat": 36.5, "lon": 32.0, "packageCount": 3}, headers=auth(tok)).json()
     courier = reg().json()["token"]
     seen = client.get(f"/v1/jobs/{j['id']}", headers=auth(courier)).json()
-    assert seen["employer"] == {"id": uid_, "name": "Mavi Pide", "logo": v}
+    assert seen["employer"] == {"id": uid_, "name": "Mavi Pide", "logo": v, "tabela": False}  # 1.26.0: tabela işareti
 
 
 def test_jpeg_and_webp_are_accepted_plain_base64_too():

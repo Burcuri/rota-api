@@ -31,6 +31,17 @@ def seed():
     return a, b
 
 
+def district_row(hd, a):
+    """1.22.0: kırılım Türkiye › il › ilçe › … — önce il (Antalya), sonra ilçe satırı."""
+    top = client.get("/v1/admin/doors/summary", headers=hd).json()
+    assert top["level"] == "province"
+    prov = next(x for x in top["items"] if x["province"] == "Antalya")
+    assert prov["p"] == "antalya" and prov["name"] == "Antalya" and prov["official"] is True
+    s = client.get("/v1/admin/doors/summary", params={"p": prov["p"]}, headers=hd).json()
+    assert s["level"] == "district"
+    return next(x for x in s["items"] if x["district"] == a["district"])
+
+
 def test_admin_only():
     for path in ("/v1/admin/doors/summary", "/v1/admin/doors", "/v1/admin/doors/export", "/v1/admin/doors/x"):
         assert client.get(path).status_code == 401
@@ -43,10 +54,10 @@ def test_summary_drilldown_and_statuses():
     a, b = seed()
     hd, _ = admin_login()
     s = client.get("/v1/admin/doors/summary", headers=hd).json()
-    assert s["level"] == "district" and s["totals"]["total"] >= 4 and s["totals"]["new7d"] >= 4
-    dist = [x for x in s["items"] if x["district"] == a["district"]]
-    assert len(dist) == 1 and dist[0]["total"] == 4 and dist[0]["verified"] == 1 and dist[0]["pending"] == 2 and dist[0]["disputed"] == 1
-    d = dist[0]
+    assert s["level"] == "province" and s["totals"]["total"] >= 4 and s["totals"]["new7d"] >= 4
+    d = district_row(hd, a)
+    assert d["total"] == 4 and d["verified"] == 1 and d["pending"] == 2 and d["disputed"] == 1
+    assert d["official"] is False  # deneme ilçesi resmi listede yok: yönetimde "resmi listede yok" işareti
     s2 = client.get("/v1/admin/doors/summary", params={"p": d["p"], "d": d["d"]}, headers=hd).json()
     assert s2["level"] == "neighborhood" and {x["neighborhood"] for x in s2["items"]} == {a["neighborhood"], b["neighborhood"]}
     nb = next(x for x in s2["items"] if x["neighborhood"] == a["neighborhood"])
@@ -54,7 +65,7 @@ def test_summary_drilldown_and_statuses():
     s3 = client.get("/v1/admin/doors/summary", params={"p": d["p"], "d": d["d"], "n": nb["n"]}, headers=hd).json()
     assert s3["level"] == "street" and len(s3["items"]) == 1
     st = s3["items"][0]
-    assert st["street"] == "Atatürk Cad." and st["k"] == "cadde" and st["doors"] == 3 and st["verified"] == 1
+    assert st["street"] == "Atatürk Caddesi" and st["k"] == "cadde" and st["doors"] == 3 and st["verified"] == 1  # 1.22.0: düzgün yazım
     # doğrulanmış sokak / mahalle önce sıralanır
     assert s2["items"][0]["neighborhood"] == a["neighborhood"]
 
@@ -62,7 +73,7 @@ def test_summary_drilldown_and_statuses():
 def test_points_filters_bbox_and_detail():
     a, b = seed()
     hd, _ = admin_login()
-    d = next(x for x in client.get("/v1/admin/doors/summary", headers=hd).json()["items"] if x["district"] == a["district"])
+    d = district_row(hd, a)
     r = client.get("/v1/admin/doors", params={"p": d["p"], "d": d["d"]}, headers=hd).json()
     assert r["total"] == 4 and {x["door"] for x in r["items"]} == {"1", "2", "3", "9"}
     by = {x["door"]: x for x in r["items"]}
@@ -89,7 +100,7 @@ def test_points_filters_bbox_and_detail():
 def test_delete_point_with_votes_and_audit():
     a, _ = seed()
     hd, name = admin_login()
-    d = next(x for x in client.get("/v1/admin/doors/summary", headers=hd).json()["items"] if x["district"] == a["district"])
+    d = district_row(hd, a)
     pts = client.get("/v1/admin/doors", params={"p": d["p"], "d": d["d"], "status": "disputed"}, headers=hd).json()["items"]
     pid = pts[0]["id"]
     assert client.delete(f"/v1/admin/doors/{pid}", headers=hd).json() == {"ok": True}
@@ -107,7 +118,7 @@ def test_delete_point_with_votes_and_audit():
 def test_csv_export_excel_friendly_and_logged():
     a, _ = seed()
     hd, _ = admin_login()
-    d = next(x for x in client.get("/v1/admin/doors/summary", headers=hd).json()["items"] if x["district"] == a["district"])
+    d = district_row(hd, a)
     r = client.get("/v1/admin/doors/export", params={"p": d["p"], "d": d["d"]}, headers=hd)
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/csv") and "rota-kapi-haritasi-" in r.headers["content-disposition"]
     assert r.content.startswith("﻿".encode())

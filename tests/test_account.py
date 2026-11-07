@@ -215,18 +215,21 @@ def test_not_enough_coins_writes_nothing():
     sp, sp_id = new("sponsor")
     buy(sp, 50)
     r = client.post("/v1/ads", json={"label": "Büyük kampanya", "points": [{"lat": HERE[0], "lon": HERE[1]}], "days": 30}, headers=auth(sp))
-    assert r.status_code == 400 and "Yetersiz coin" in r.json()["detail"] and "850" in r.json()["detail"]
+    assert r.status_code == 400 and "Yetersiz coin" in r.json()["detail"] and str(30 * AD_COIN_PER_DAY - 50) in r.json()["detail"]
     assert balance(sp) == 50 and client.get("/v1/ads/mine", headers=auth(sp)).json()["items"] == []
 
 
 def test_parallel_spends_never_go_negative():
     sp, sp_id = new("sponsor")
-    buy(sp, 50)  # yalnız bir günlük reklama (30) yeter
+    buy(sp, 50)
+    one_week = 7 * AD_COIN_PER_DAY  # 1.26.0: 21 coin
+    assert client.post("/v1/ads", json={"label": "Önce", "points": [{"lat": HERE[0], "lon": HERE[1]}], "days": 7}, headers=auth(sp)).status_code == 200
+    left = 50 - one_week  # 29: yalnız BİR haftalık reklama daha yeter
     codes = []
 
     def go():
         c = TestClient(app)
-        codes.append(c.post("/v1/ads", json={"label": "Aynı an", "points": [{"lat": HERE[0], "lon": HERE[1]}], "days": 1}, headers=auth(sp)).status_code)
+        codes.append(c.post("/v1/ads", json={"label": "Aynı an", "points": [{"lat": HERE[0], "lon": HERE[1]}], "days": 7}, headers=auth(sp)).status_code)
 
     ts = [threading.Thread(target=go) for _ in range(4)]
     for t in ts:
@@ -234,7 +237,7 @@ def test_parallel_spends_never_go_negative():
     for t in ts:
         t.join()
     assert sorted(codes).count(200) == 1, codes
-    assert balance(sp) == 50 - AD_COIN_PER_DAY
+    assert balance(sp) == left - one_week
 
 
 def test_banned_owner_ads_hidden():
@@ -334,7 +337,7 @@ def test_admin_coins_and_ads():
     assert client.post(f"/v1/admin/users/{sp_id}/coins", json={"delta": 50, "note": ""}, headers=h).status_code == 400
     assert client.post(f"/v1/admin/users/{sp_id}/coins", json={"delta": -1000, "note": "fazla"}, headers=h).status_code == 400
     r = client.post(f"/v1/admin/users/{sp_id}/coins", json={"delta": 50, "note": "Yüklenmeyen satın alma"}, headers=h)
-    assert r.status_code == 200 and r.json()["balance"] == 220
+    assert r.status_code == 200 and r.json()["balance"] == 200 - AD_COIN_PER_DAY + 50
     lst = client.get("/v1/admin/ads", headers=h).json()["items"]
     mine = [x for x in lst if x["id"] == ad["id"]][0]
     assert mine["owner"]["code"].startswith("SPN-") and mine["active"]

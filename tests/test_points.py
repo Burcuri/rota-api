@@ -6,6 +6,7 @@
 - Kurye alınca puan bloke, ödülü koyana bildirim; 7 gün içinde kargo yoksa iade; kargodan sonra 14 günde cevap yoksa teslim alındı sayılır;
   "gelmedi" yönetime düşer. Kargo adresini yalnız ödülü koyan görür; talep kapanınca silinir.
 """
+import base64
 from datetime import timedelta
 
 import pytest
@@ -221,125 +222,180 @@ def test_catalog_hides_removed_out_of_stock_and_banned_owner():
 
 
 # ------------------------------------------------------------------ talep süreci
-def test_claim_holds_points_notifies_owner_and_validates_address():
+def redeem(tok, code, check=False):
+    return client.post("/v1/rewards/redeem", json={"code": code, **({"check": True} if check else {})}, headers=auth(tok))
+
+
+def answer(tok, cid, **b):
+    return client.post(f"/v1/rewards/claims/{cid}/answer", json=b, headers=auth(tok))
+
+
+def test_claim_makes_barcode_holds_points_and_notifies_owner():
+    """1.25.0 (kullanıcı kararı 6 Kasım 2026): "Bu ürünü al" → barkod; kargo bilgisi istenmez, saklanmaz."""
     stok, sid = new("sponsor")
     rw = make_reward(stok, tier=1000, value=100, qty=2).json()
     ctok, cid = new("courier")
-    r = claim(ctok, rw["id"])
+    r = claim(ctok, rw["id"], {})
     assert r.status_code == 400 and "1000 puan daha lazım" in r.json()["detail"]
     give_points(cid, 1200)
-    assert claim(ctok, rw["id"], {**SHIP, "address": "kısa"}).status_code == 400
-    assert claim(ctok, rw["id"], {**SHIP, "phone": "123"}).status_code == 400
-    assert claim(ctok, rw["id"], {**SHIP, "name": "Ayşe"}).status_code == 400
-    ok = claim(ctok, rw["id"])
+    ok = claim(ctok, rw["id"], {})  # ad / telefon / adres yok
     assert ok.status_code == 200, ok.text
     c = ok.json()
-    assert c["status"] == "pending" and c["cost"] == 1000 and c["code"].startswith("ODL") and c["ship"] is None  # kurye kendi adresini geri almaz
+    assert c["status"] == "pending" and c["cost"] == 1000 and c["code"].startswith("ODL") and c["ship"] is None and c["expiresAt"]
     m = me(ctok)
     assert m["balance"] == 200 and m["held"] == 1000
-    assert claim(ctok, rw["id"]).status_code == 409  # aynı ödül için açık talep
+    assert claim(ctok, rw["id"], {}).status_code == 409  # aynı ürün için açık barkod
     mine = client.get("/v1/rewards/mine", headers=auth(stok)).json()["items"][0]
     assert mine["qtyLeft"] == 1 and mine["stats"]["pending"] == 1
     n = notices(stok)
-    assert n and n[0]["kind"] == "reward.claimed" and "KRY-" in n[0]["text"] and "hak kazandı" in n[0]["text"]
+    assert n and n[0]["kind"] == "reward.claimed" and "KRY-" in n[0]["text"] and c["code"] in n[0]["text"] and "Barkod okut" in n[0]["text"]
     owner = client.get("/v1/rewards/claims/owner", headers=auth(stok)).json()["items"][0]
-    assert owner["ship"] == {"name": "Ayşe Kaya", "phone": "05321234567", "address": SHIP["address"]} and owner["courier"]["code"].startswith("KRY-")
-    other, _ = new("sponsor")
-    assert client.post(f"/v1/rewards/claims/{c['id']}/ship", json={"carrier": "Yurtiçi", "tracking": "123456"}, headers=auth(other)).status_code == 404
+    assert owner["ship"] is None and owner["courier"]["code"].startswith("KRY-")
+    give_points(cid, 1000)
+    old = claim(ctok, make_reward(stok, name="Yağmurluk 2").json()["id"])  # eski sürüm kargo bilgisi yollasa da saklanmaz
+    assert old.status_code == 200
+    db = SessionLocal()
+    try:
+        assert db.get(RewardClaim, old.json()["id"]).ship_address == "" and db.get(RewardClaim, old.json()["id"]).ship_phone == ""
+    finally:
+        db.close()
 
 
-def test_ship_answer_received_scrubs_address_and_feeds_scorecard():
+def test_redeem_is_single_use_then_courier_receives_and_rates():
     stok, sid = new("sponsor")
     rw = make_reward(stok).json()
     ctok, cid = new("courier")
     give_points(cid, 1000)
-    c = claim(ctok, rw["id"]).json()
-    assert client.post(f"/v1/rewards/claims/{c['id']}/ship", json={"carrier": "Yurtiçi", "tracking": "123456"}, headers=auth(ctok)).status_code == 403
-    s = client.post(f"/v1/rewards/claims/{c['id']}/ship", json={"carrier": "Yurtiçi Kargo", "tracking": "YK123456"}, headers=auth(stok))
-    assert s.status_code == 200 and s.json()["status"] == "shipped" and s.json()["onTime"] is True
+    c = claim(ctok, rw["id"], {}).json()
+    early = answer(ctok, c["id"], received=True, stars=5)
+    assert early.status_code == 409 and "okutmalı" in early.json()["detail"]  # okutulmadan "Teslim aldım" olmaz
+    other, _ = new("sponsor")
+    assert redeem(other, c["code"]).status_code == 404  # başkasının barkodu bulunamaz sayılır
+    assert redeem(ctok, c["code"]).status_code == 403  # kurye okutamaz
+    pv = redeem(stok, c["code"], check=True)  # önce göster: hangi ürün, hangi kurye — hiçbir şey değişmez
+    assert pv.status_code == 200 and pv.json()["status"] == "pending" and pv.json()["reward"] == rw["name"] and pv.json()["courier"]["code"], pv.text
+    assert redeem(stok, c["code"], check=True).status_code == 200 and not notices(ctok)  # tekrar bakılabilir; kuryeye haber gitmez
+    assert redeem(other, c["code"], check=True).status_code == 404
+    g = redeem(stok, " odl-" + c["code"][3:].lower() + " ")  # tire / küçük harf / boşlukla okunsa da
+    assert g.status_code == 200 and g.json()["status"] == "shipped" and g.json()["givenAt"], g.text
+    again = redeem(stok, c["code"])
+    assert again.status_code == 409 and "ikinci kez" in again.json()["detail"]  # TEK KULLANIMLIK
     kn = notices(ctok)
-    assert kn and kn[0]["kind"] == "reward.shipped" and "YK123456" in kn[0]["text"]
-    a = client.post(f"/v1/rewards/claims/{c['id']}/answer", json={"received": True, "stars": 4}, headers=auth(ctok))
+    assert kn and kn[0]["kind"] == "reward.given" and "Teslim aldım" in kn[0]["text"]
+    a = answer(ctok, c["id"], received=True, stars=4)
     assert a.status_code == 200 and a.json()["status"] == "received" and a.json()["stars"] == 4
-    db = SessionLocal()
-    try:
-        row = db.get(RewardClaim, c["id"])
-        assert row.ship_address == "" and row.ship_phone == "" and row.ship_name == "" and row.close_reason == "courier_received"
-    finally:
-        db.close()
     assert me(ctok)["held"] == 0 and me(ctok)["balance"] == 0
     assert notices(stok)[0]["kind"] == "reward.received"
     head, _ = admin_login()
     sc = {x["id"]: x for x in client.get("/v1/admin/rewards/scorecards", headers=head).json()["items"]}[sid]
     assert sc["claims"] == 1 and sc["onTimePct"] == 100 and sc["avgStars"] == 4.0
+    assert client.post(f"/v1/rewards/claims/{c['id']}/ship", json={"carrier": "Yurtiçi", "tracking": "123456"}, headers=auth(stok)).status_code == 410  # kargo kalktı
 
 
-def test_not_received_goes_to_admin_who_can_refund():
+def test_not_received_after_scan_goes_to_admin_who_can_refund():
     stok, sid = new("sponsor")
     rw = make_reward(stok).json()
     ctok, cid = new("courier")
     give_points(cid, 1000)
-    c = claim(ctok, rw["id"]).json()
-    early = client.post(f"/v1/rewards/claims/{c['id']}/answer", json={"received": False}, headers=auth(ctok))
+    c = claim(ctok, rw["id"], {}).json()
+    early = answer(ctok, c["id"], received=False)
     assert early.status_code == 409 and "kendiliğinden iade" in early.json()["detail"]
-    client.post(f"/v1/rewards/claims/{c['id']}/ship", json={"carrier": "PTT", "tracking": "PT99887"}, headers=auth(stok))
-    d = client.post(f"/v1/rewards/claims/{c['id']}/answer", json={"received": False, "note": "Kargo gelmedi"}, headers=auth(ctok))
+    redeem(stok, c["code"])
+    d = answer(ctok, c["id"], received=False, note="Okuttu ama vermedi")
     assert d.status_code == 200 and d.json()["status"] == "disputed"
     head, _ = admin_login()
     lst = client.get("/v1/admin/rewards/claims?status=disputed", headers=head).json()["items"]
-    assert any(x["id"] == c["id"] and x["note"] == "Kargo gelmedi" and "address" not in x for x in lst)
-    res = client.post(f"/v1/admin/rewards/claims/{c['id']}/resolve", json={"action": "refund", "note": "kargo kayıp"}, headers=head)
+    assert any(x["id"] == c["id"] and x["note"] == "Okuttu ama vermedi" and "address" not in x for x in lst)
+    res = client.post(f"/v1/admin/rewards/claims/{c['id']}/resolve", json={"action": "refund", "note": "ürün verilmedi"}, headers=head)
     assert res.status_code == 200 and res.json()["status"] == "refunded"
     assert me(ctok)["balance"] == 1000
-    audit = client.get("/v1/admin/audit", headers=head).json()
-    rows = audit["items"] if isinstance(audit, dict) else audit
-    assert any(x.get("action") == "reward_resolve" for x in rows)
 
 
-def test_cancel_before_shipping_refunds_courier_side_returns_stock():
+def test_cancel_before_scan_refunds_courier_side_returns_stock():
     stok, _ = new("sponsor")
     rw = make_reward(stok, qty=1).json()
     ctok, cid = new("courier")
     give_points(cid, 2000)
-    c = claim(ctok, rw["id"]).json()
+    c = claim(ctok, rw["id"], {}).json()
     assert client.get("/v1/rewards/mine", headers=auth(stok)).json()["items"][0]["qtyLeft"] == 0
     x = client.post(f"/v1/rewards/claims/{c['id']}/cancel", headers=auth(ctok))
     assert x.status_code == 200 and x.json()["status"] == "cancelled"
     assert me(ctok)["balance"] == 2000
-    assert client.get("/v1/rewards/mine", headers=auth(stok)).json()["items"][0]["qtyLeft"] == 1  # kurye vazgeçti: stok geri
-    c2 = claim(ctok, rw["id"]).json()
-    y = client.post(f"/v1/rewards/claims/{c2['id']}/cancel", headers=auth(stok))  # ödülü koyan gönderemiyor (stok bitti)
+    assert redeem(stok, c["code"]).status_code == 409  # iptal edilen barkod okunmaz
+    assert client.get("/v1/rewards/mine", headers=auth(stok)).json()["items"][0]["qtyLeft"] == 1
+    c2 = claim(ctok, rw["id"], {}).json()
+    y = client.post(f"/v1/rewards/claims/{c2['id']}/cancel", headers=auth(stok))  # ödülü koyan veremiyor (stok bitti)
     assert y.status_code == 200 and y.json()["closeReason"] == "owner_cancel"
     assert me(ctok)["balance"] == 2000
-    assert client.get("/v1/rewards/mine", headers=auth(stok)).json()["items"][0]["qtyLeft"] == 0
 
 
-def test_sweep_refunds_late_shipping_and_auto_receives():
-    stok, _ = new("sponsor")
+def test_sweep_refunds_unscanned_barcodes_without_penalty_and_auto_receives():
+    stok, sid = new("sponsor")
     rw = make_reward(stok, qty=5).json()
     ctok, cid = new("courier")
     give_points(cid, 3000)
-    late = claim(ctok, rw["id"]).json()
+    late = claim(ctok, rw["id"], {}).json()
     ctok2, cid2 = new("courier")
     give_points(cid2, 1000)
-    shipped = claim(ctok2, rw["id"]).json()
-    client.post(f"/v1/rewards/claims/{shipped['id']}/ship", json={"carrier": "Aras", "tracking": "AR12345"}, headers=auth(stok))
+    given = claim(ctok2, rw["id"], {}).json()
+    redeem(stok, given["code"])
     db = SessionLocal()
     try:
         db.get(RewardClaim, late["id"]).ship_due_at = now() - timedelta(minutes=1)
-        db.get(RewardClaim, shipped["id"]).answer_due_at = now() - timedelta(minutes=1)
+        db.get(RewardClaim, given["id"]).answer_due_at = now() - timedelta(minutes=1)
         db.commit()
         n = points_router.sweep(db)
         assert n["lateRefund"] == 1 and n["autoReceived"] == 1
-        a, b = db.get(RewardClaim, late["id"]), db.get(RewardClaim, shipped["id"])
-        assert a.status == "refunded" and a.close_reason == "late_ship" and a.ship_address == ""
-        assert b.status == "received" and b.close_reason == "auto_received" and b.ship_address == ""
-        assert db.get(Reward, rw["id"]).qty_left == 4  # 5 − 2 + 1 (geç kalan geri)
+        a, b = db.get(RewardClaim, late["id"]), db.get(RewardClaim, given["id"])
+        assert a.status == "refunded" and a.close_reason == "barcode_expired"  # ödülü koyanın karnesine "geç" yazılmaz
+        assert b.status == "received" and b.close_reason == "auto_received"
+        assert db.get(Reward, rw["id"]).qty_left == 4
     finally:
         db.close()
+    assert redeem(stok, late["code"]).status_code == 409  # süresi dolan barkod okunmaz
     assert me(ctok)["balance"] == 3000
-    assert any(x["kind"] == "reward.refunded" for x in notices(ctok))
+    assert any(x["kind"] == "reward.refunded" and "okutulmadı" in x["text"] for x in notices(ctok))
     assert any(x["kind"] == "reward.late" for x in notices(stok))
+    head, _ = admin_login()
+    sc = {x["id"]: x for x in client.get("/v1/admin/rewards/scorecards", headers=head).json()["items"]}[sid]
+    assert sc.get("late", 0) == 0
+
+
+PNG = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64).decode()
+
+
+def test_product_photos_three_slots_public_and_owner_only():
+    """1.25.0: "3 resimlik foto galeri" — ürün başına 3 fotoğraf, katalogda sürümleriyle; yalnız sahibi yükler."""
+    stok, _ = new("sponsor")
+    rw = make_reward(stok).json()
+    assert rw["photos"] == ["", "", ""]
+    up = client.put(f"/v1/rewards/{rw['id']}/photos/1", json={"data": "data:image/png;base64," + PNG}, headers=auth(stok))
+    assert up.status_code == 200 and up.json()["photos"][1] and not up.json()["photos"][0]
+    g = client.get(f"/v1/rewards/{rw['id']}/photos/1")  # oturumsuz
+    assert g.status_code == 200 and g.headers["content-type"] == "image/png"
+    ctok, _ = new("courier")
+    cat = [x for x in client.get("/v1/rewards", headers=auth(ctok)).json()["items"] if x["id"] == rw["id"]][0]
+    assert cat["photos"][1] == up.json()["photos"][1]
+    other, _ = new("sponsor")
+    assert client.put(f"/v1/rewards/{rw['id']}/photos/0", json={"data": PNG}, headers=auth(other)).status_code == 404
+    assert client.put(f"/v1/rewards/{rw['id']}/photos/3", json={"data": PNG}, headers=auth(stok)).status_code == 400
+    assert client.put(f"/v1/rewards/{rw['id']}/photos/0", json={"data": base64.b64encode(b"<svg></svg>" * 3).decode()}, headers=auth(stok)).status_code == 415
+    big = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\x00" * (310 * 1024)).decode()
+    assert client.put(f"/v1/rewards/{rw['id']}/photos/0", json={"data": big}, headers=auth(stok)).status_code in (413, 422)
+    d = client.delete(f"/v1/rewards/{rw['id']}/photos/1", headers=auth(stok))
+    assert d.status_code == 200 and d.json()["photos"] == ["", "", ""]
+    assert client.get(f"/v1/rewards/{rw['id']}/photos/1").status_code == 404
+    # yönetim: ilgisiz resmi siler; ödülü koyana duyuru gider
+    client.put(f"/v1/rewards/{rw['id']}/photos/2", json={"data": PNG}, headers=auth(stok))
+    head, _ = admin_login()
+    lst = client.get("/v1/admin/rewards/photos", headers=head).json()["items"]
+    row = [x for x in lst if x["rewardId"] == rw["id"]][0]
+    assert row["idx"] == 2 and row["reward"] == rw["name"] and row["v"] and row["owner"]["code"]
+    assert client.get("/v1/admin/rewards/photos", headers=auth(stok)).status_code in (401, 403)
+    assert client.delete(f"/v1/admin/rewards/{rw['id']}/photos/2", headers=head).json()["ok"]
+    assert client.get(f"/v1/rewards/{rw['id']}/photos/2").status_code == 404
+    assert any(n["kind"] == "reward.photo" and "yönetim" in n["text"] for n in notices(stok))
+    assert client.get("/v1/admin/rewards/photos?before=" + row["at"], headers=head).status_code == 200
 
 
 def test_notices_ack_deletes_and_are_private():

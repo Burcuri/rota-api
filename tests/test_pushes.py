@@ -185,6 +185,19 @@ def test_message_push_has_no_personal_data_and_coalesces(_clean):
     assert len(expo.to(t)) == 2
 
 
+def test_silent_group_point_sends_no_push(_clean):
+    """1.25.0: grup haritası noktası sessiz gider — mesaj ulaşır, telefona bildirim gitmez."""
+    expo, _ = _clean
+    atok, a = user("courier")
+    btok, b = user("courier")
+    t = on(btok)
+    r = client.post("/v1/relay", headers=auth(atok), json={"to": [b], "body": '{"v":1,"loc":{}}', "silent": True})
+    assert r.status_code == 200 and r.json()["recipients"] == [b]
+    assert expo.to(t) == []
+    msg(atok, b)  # normal mesaj: bildirim gider
+    assert len(expo.to(t)) == 1
+
+
 def test_preferences_and_quiet_time(_clean):
     expo, _ = _clean
     atok, a = user("employer")
@@ -392,6 +405,55 @@ def test_every_system_notice_becomes_a_push(_clean):
     finally:
         db.close()
     assert len(expo.to(t)) == 2
+
+
+def test_reward_notices_reach_sponsor_and_courier_with_their_own_text(_clean):
+    """1.25.0: kurye ürünü hak edince SPONSORUN telefonuna, barkod okutulunca kuryenin telefonuna kendi metniyle bildirim (adı / kodu yok)"""
+    from test_points import give_points, make_reward
+    expo, _ = _clean
+    stok, _sid = user("sponsor", "Akaryakıt Sahibi Bildirim")
+    ctok, cid = user("courier")
+    ts, tc = on(stok), on(ctok)
+    rw = make_reward(stok)
+    assert rw.status_code == 200, rw.text
+    give_points(cid, 1000)
+    c = client.post(f"/v1/rewards/{rw.json()['id']}/claim", json={}, headers=auth(ctok))
+    assert c.status_code == 200, c.text
+    assert [m["body"] for m in expo.to(ts)] == ["🎁 Bir kurye ödül ürününüzü hak etti — gelince barkodunu okutun"]
+    assert expo.to(ts)[0]["data"]["t"] == "notice"  # dokununca duyuru gibi açılır (eski sürümler de)
+    flat = json.dumps(expo.to(ts), ensure_ascii=False)
+    assert c.json()["code"] not in flat and "yağmurluğu" not in flat  # barkod ve ürün adı bildirime yazılmaz
+    pushes.reset_memory()
+    g = client.post("/v1/rewards/redeem", json={"code": c.json()["code"]}, headers=auth(stok))
+    assert g.status_code == 200, g.text
+    assert [m["body"] for m in expo.to(tc)] == ["🎁 Barkodun okutuldu — ürünü aldıysan “Teslim aldım” de"]
+
+
+def test_ad_ending_reminder_push_has_its_own_text_and_kind(_clean):
+    """1.26.0: reklam bitişine 1 gün kala sahibinin telefonuna "Reklamın yarın bitiyor" (reklam adı yazmaz); k=ad_ending → Reklamlarım"""
+    from datetime import timedelta
+
+    from app.main import account_router
+    from app.models import AdBooking, now
+    expo, _ = _clean
+    stok, sid = user("sponsor", "Reklam Sahibi Bildirim")
+    ts = on(stok)
+    assert client.post("/v1/coins/test-buy", json={"n": 50}, headers=auth(stok)).status_code == 200
+    r = client.post("/v1/ads", json={"label": "Gizli kampanya adı", "points": [{"lat": 36.54, "lon": 32.0}], "days": 7}, headers=auth(stok))
+    assert r.status_code == 200, r.text
+    db = SessionLocal()
+    try:
+        row = db.get(AdBooking, r.json()["items"][0]["id"])
+        row.ends_at = now() + timedelta(hours=5)
+        db.commit()
+        pushes.reset_memory()
+        account_router.sweep(db)
+    finally:
+        db.close()
+    got = expo.to(ts)
+    assert [m["body"] for m in got] == ["📍 Reklamın yarın bitiyor — Reklamlarım'dan tek dokunuşla uzatabilirsin"]
+    assert got[0]["data"] == {"t": "notice", "k": "ad_ending"}  # uygulama k'ye bakıp Reklamlarım'ı açar
+    assert "Gizli kampanya" not in json.dumps(got, ensure_ascii=False)
 
 
 def test_map_hello_push(_clean):

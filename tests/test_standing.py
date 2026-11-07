@@ -140,7 +140,7 @@ def test_disputes_make_owner_irregular():
     rw = make_reward(s).json()
     add_claims(sid, cid, rw["id"], 2, status="refunded", close_reason="admin_refund")
     st = client.get("/v1/rewards/mine", headers=auth(s)).json()["standing"]
-    assert st["hidden"] and any("gelmedi" in x for x in st["reasons"])
+    assert st["hidden"] and any("almadım" in x for x in st["reasons"])
 
 
 def test_admin_feature_puts_owner_first_with_notice_and_audit():
