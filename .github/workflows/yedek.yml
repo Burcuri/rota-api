@@ -47,7 +47,7 @@ jobs:
           echo "NAME=$name" >> "$GITHUB_ENV"
 
       - name: Yedeği sakla (30 gün)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6  # 8 Kasım 2026: v4 "Node.js 20 is deprecated" uyarısı veriyordu; v6 Node 24'te çalışır
         with:
           name: ${{ env.NAME }}
           path: ${{ env.NAME }}
