@@ -430,7 +430,7 @@ def test_reward_notices_reach_sponsor_and_courier_with_their_own_text(_clean):
 
 
 def test_ad_ending_reminder_push_has_its_own_text_and_kind(_clean):
-    """1.26.0: reklam bitişine 1 gün kala sahibinin telefonuna "Reklamın yarın bitiyor" (reklam adı yazmaz); k=ad_ending → Reklamlarım"""
+    """1.26.0: reklam bitişine 1 gün kala sahibinin telefonuna "Tabelan yarın bitiyor" (1.27.0 metni; reklam adı yazmaz); k=ad_ending → Reklamlarım"""
     from datetime import timedelta
 
     from app.main import account_router
@@ -451,7 +451,7 @@ def test_ad_ending_reminder_push_has_its_own_text_and_kind(_clean):
     finally:
         db.close()
     got = expo.to(ts)
-    assert [m["body"] for m in got] == ["📍 Reklamın yarın bitiyor — Reklamlarım'dan tek dokunuşla uzatabilirsin"]
+    assert [m["body"] for m in got] == ["🪧 Tabelan yarın bitiyor — Reklamlarım'dan tek dokunuşla uzatabilirsin"]
     assert got[0]["data"] == {"t": "notice", "k": "ad_ending"}  # uygulama k'ye bakıp Reklamlarım'ı açar
     assert "Gizli kampanya" not in json.dumps(got, ensure_ascii=False)
 

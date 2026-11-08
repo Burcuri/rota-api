@@ -1,3 +1,75 @@
+# Sunucu güncellemesi — Dilim 38 · sohbette ŞİKÂYET + ENGEL (mağaza şartı), mağaza İADESİ, yedek işi Node 24 (9 Kasım 2026) — sunucu 1.28.0
+
+**Dilim 37'yi yüklediysen aşağıdakiler yeter.** Yeni `reports` tablosu ve `store_purchases.refunded_at` sütunu sunucu açılırken kendiliğinden
+kurulur. Yeni paket YOK, yeni ZORUNLU ortam değişkeni YOK. Ayrıntı: uygulama paketindeki `docs/DILIM-38.md`.
+- **`app/reports.py` (YENİ)**: şikâyet (kullanıcı isteği 9 Kasım: "Sohbete Şikâyet et + Engelle … lütfen bunu bitir"; App Store 1.2 ve
+  Google Play UGC şartı). Uygulama şikâyet ettiğin mesajı ve o kişinin bu sohbetteki son mesajlarını (en çok 6) yollar — mesajlar sunucuda
+  tutulmadığı için. Yönetim › **Şikâyetler** sekmesi: İşlem yok / Uyar / Hesabı kapat. Şikâyet edene "incelendi", şikâyet edilene (uyarıda)
+  uyarı duyurusu gider; kimin şikâyet ettiği söylenmez. Kapatılan şikâyet 180 gün sonra silinir. `DESTEK_EPOSTA` + e-posta bağlıysa
+  yeni şikâyet o adrese haber verir (içerik yazmaz).
+- **`app/blocks.py` (YENİ)**: engel HER YERDE: engellediğin kişiyle birbirinize mesaj ulaşmaz (birebir ve ortak grup), haritada görünmezsiniz,
+  selam / canlı takip isteği / adres listesi gönderilemez, açık takip ve görev kapanır. Engellenene söylenmez. (`app/relay.py`,
+  `app/nearby.py`, `app/follow.py`, `app/tasks.py`)
+- **`app/iap.py`**: mağaza İADESİ — Google Play'in iptal ettiği / iade ettiği satın alma 6 saatte bir okunur (sunucu uyanıkken; yönetimde
+  "şimdi denetle" düğmesi), App Store'un iade bildirimi `/v1/iap/apple/notify`'a gelir ve Apple'dan yeniden doğrulanır → coin BİR KEZ düşülür,
+  kişiye duyuru gider. Mağaza anahtarları yokken bir şey yapmaz. Yönetim › Özet › **Mağaza satışları** kutusu.
+- **`app/backup.py`, `app/backup_core.py`**: yedek kapalıysa nedeni yazar: anahtar yok mu, yoksa 24 karakterden kısa mı (8 Kasım'daki
+  "BACKUP_KEY yok" karışıklığı).
+- **`app/admin.py`** (Özet'te açık şikâyet ve en eskisinin yaşı), **`app/events.py`**, **`app/main.py`** (sürüm 1.28.0), **`app/migrate.py`**,
+  **`app/models.py`**, **`app/static/yonetim.js`**, **`app/static/yonetim.css`**, **`app/webapp/`** (web ikizi 0.34.0).
+- **`.github/workflows/yedek.yml`**: `actions/upload-artifact@v4` → `@v6` ("Node.js 20 is deprecated" uyarısı gider).
+
+**Yapılacak (GitHub `Burcuri/rota-api`):**
+1. `app` klasörüne gir → `webapp` klasörünü sil (⋯ → *Delete directory*) → Commit.
+2. Yine `app` klasöründeyken **Add file → Upload files** → zip'teki `app/webapp` ve `app/static` klasörlerini ve `app/admin.py`,
+   `app/backup.py`, `app/backup_core.py`, `app/blocks.py`, `app/events.py`, `app/follow.py`, `app/iap.py`, `app/main.py`, `app/migrate.py`,
+   `app/models.py`, `app/nearby.py`, `app/relay.py`, `app/reports.py`, `app/tasks.py` dosyalarını birlikte sürükle → Commit. (69 dosya, sınır 100.)
+3. `tests` klasörüne gir → **Upload files** → zip'teki `tests/test_backup.py`, `tests/test_iap_refunds.py`, `tests/test_reports.py` → Commit.
+4. Ana klasöre dön → **Upload files** → zip'teki `GUNCELLEME_ADIMLARI.md` → Commit.
+5. `.github/workflows/yedek.yml` dosyasını aç → ✏️ (kalem) → `upload-artifact@v4` yazısını `upload-artifact@v6` yap → **Commit changes**.
+   (İstersen atla: eski hâli de çalışır, yalnız sarı uyarı verir.)
+6. Render › **Manual Deploy → Deploy latest commit** → **Live**. Deneme: `https://rota-sunucu.onrender.com/openapi.json` → en başta
+   `"version":"1.28.0"`; yönetim panelinde **Şikâyetler** sekmesi ve Özet'te **Mağaza satışları** kutusu ("bağlı değil", "Test satın alma:
+   AÇIK"). Render'da değişiklik YOK.
+
+---
+
+# Sunucu güncellemesi — Dilim 37 · reklam TEK ÜRÜN (harita tabelası, nokta başına ayda 1 coin), SMS kodu hazır (Netgsm / İletimerkezi / Verimor) (7 Kasım 2026) — sunucu 1.27.0
+
+**Dilim 35'i yüklediysen aşağıdakiler yeter — Dilim 36'yı yüklemediysen de** (bu zip öncekilerin hepsini içerir; 36'nın dosyaları listede).
+Dilim 36'nın beş YENİ tablosu ve `ad_bookings.reminded_at` sütunu (yoksa) sunucu açılırken kendiliğinden kurulur; Dilim 37'de yeni tablo /
+sütun YOK. Yeni paket YOK. Ayrıntı: uygulama paketindeki `docs/DILIM-37.md`.
+- **`app/account.py`**: TEK ÜRÜN (kullanıcı kararı: "O noktada 1 gün durması da 1 ay durmasıda 1 coin (≈ 10 TL)") — haritada 1 nokta = logolu
+  tabela, nokta başına ayda 1 coin. İşletme: İşletme Profili'ndeki konumda tek tabela. Sponsor: bir seferde 1–10 nokta (hepsi bir grup),
+  yazı isteğe bağlı; aynı anda en çok 50 tabela; kendi tabelalarından en az 30 m uzak. "Uzat": her tabela bir ay daha, nokta başına 1 coin.
+  ~~nokta·gün 3 coin, 1 / 7 / 30 gün, paketler~~ kalktı; eski kayıtlar süresi bitene kadar yayında, uzatılınca onlar da aylık.
+- **`app/notify.py`**: SMS bağlantıları HAZIR (Netgsm, İletimerkezi, Verimor) — anahtar yazılmadıkça KAPALI (bugünkü gibi deneme modu).
+  Kurulum: aşağıda **"SMS ve e-posta"** bölümü. **`app/handoff.py`**: teslim bağlantısı SMS'i ayrı anahtarla (`SMS_LINKS=1`) ve günlük tavanla.
+  **`app/security.py`**: yönetimde hangi SMS sağlayıcısının bağlı olduğu yazar (anahtar değil, ad).
+- **`app/pushes.py`** ("🪧 Tabelan yarın bitiyor"), **`app/main.py`** (sürüm 1.27.0), **`app/static/yonetim.js`** (Kodlar'da SMS satırı,
+  Reklamlar'da "Tabela"), **`app/webapp/`** (web ikizi 0.33.0).
+- Dilim 36'dan (yüklemediysen): `app/backup.py`, `app/backup_core.py`, `app/restore.py`, `app/surveys.py` (YENİ), `app/models.py`, `app/migrate.py`.
+
+**Yapılacak (GitHub `Burcuri/rota-api`):**
+1. `app` klasörüne gir → `webapp` klasörünü sil (⋯ → *Delete directory*) → Commit.
+2. Yine `app` klasöründeyken **Add file → Upload files** → zip'teki `app/webapp` ve `app/static` klasörlerini ve `app/account.py`,
+   `app/backup.py`, `app/backup_core.py`, `app/handoff.py`, `app/main.py`, `app/migrate.py`, `app/models.py`, `app/notify.py`,
+   `app/pushes.py`, `app/restore.py`, `app/security.py`, `app/surveys.py` dosyalarını birlikte sürükle → Commit. (67 dosya, sınır 100.)
+3. `tests` klasörüne gir → **Upload files** → zip'teki `tests/test_account.py`, `tests/test_ads_extra.py`, `tests/test_backup.py`,
+   `tests/test_logos.py`, `tests/test_pushes.py`, `tests/test_relay_jobs.py`, `tests/test_sms.py`, `tests/test_surveys.py` → Commit.
+4. Ana klasöre dön → **Upload files** → zip'teki `GUNCELLEME_ADIMLARI.md` → Commit.
+5. **Render › rota-sunucu › Environment:** `BACKUP_KEY`'i eklediysen (Generate) → **Save Changes**. Eklemediysen şimdi ekle:
+   *Add Environment Variable* → Key `BACKUP_KEY` → **Generate** → *Save Changes*. Değeri ayrıca parola yöneticine not et (anahtarsız yedek
+   açılmaz). Zip'e, GitHub'a, sohbete yazılmaz.
+6. Render › **Manual Deploy → Deploy latest commit** → **Live**. Deneme: tarayıcıda `https://rota-sunucu.onrender.com/openapi.json` → en
+   başta `"version":"1.27.0"`; uygulamada Katalog'da tek ürün
+   "Harita tabelası · 1 nokta · 1 ay"; yönetim › Kodlar'ın altında "SMS: bağlı değil (deneme modu)" (sağlayıcı yazılana kadar böyle).
+- **ERTELENDİ (kullanıcı kararı 7 Kasım: "o uzun iş en son bakılsın"):** gece yedeğinin GitHub tarafı — `.github/workflows/yedek.yml`
+  dosyası ve GitHub'daki `BACKUP_KEY` gizli değeri. İkisi birlikte en sonda eklenir (yalnız biri eklenirse gece işi hata verir). O zamana
+  kadar yedek yönetim › Özet › **Şimdi yedek indir** ile elle alınır.
+
+---
+
 # Sunucu güncellemesi — Dilim 36 · reklam (tabela, istatistik, uzat, logolu işaret, fiyatlar ÷10), anketler sunucuda, veritabanı yedeği (7 Kasım 2026) — sunucu 1.26.0
 
 **Dilim 35'i yüklediysen aşağıdakiler yeter** (bu zip öncekilerin hepsini içerir). **Beş YENİ tablo** (`ad_stats`, `ad_seen`, `surveys`,
@@ -636,12 +708,59 @@ Yönetim **göremez:** mesajlar, adres listeleri (telefonlarda durur), alıcın�
 
 > Render'ın ücretsiz planında ayda 750 saat vardır; tek servisi 7/24 uyanık tutmak ~744 saat eder (sınıra yakın). Güncel şartlar için Render'ın fiyat sayfasına bak.
 
-## SMS ve e-posta (şu an test modu)
+## SMS ve e-posta
 
-- **SMS:** Türkiye'de bir sağlayıcıdan hesap + onaylı gönderici başlığı gerekir; sağlayıcı seçilince `SMS_PROVIDER` ve anahtarları **yalnız Render ortamına** yazılır, bağdaştırıcı `app/notify.py › PROVIDERS` içine eklenir (küçük iş). **Şu an sağlayıcı yok → SMS gitmez.**
-- **E-posta:** Render'a `SMTP_HOST`, `SMTP_PORT` (587), `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` yazılırsa açılır. Gerçek SMTP sunucusuyla **denenmedi** (sahte arka uçla denendi).
-- **Telefon / e-posta doğrulaması (kayıtta SMS kodu) henüz yok.** Hesap yapısı buna hazır tasarlandı; sağlayıcı bağlanınca eklenir. Ona kadar sahte hesapla puan şişirmek mümkündür (yeni hesaplar düşük ağırlıkla sayılır, yönetim yorumu gizleyebilir).
-- Hiçbiri tanımlı değilken kurye teslim bağlantısını kendi SMS / WhatsApp uygulamasıyla iletir ya da QR gösterir. **Anahtarlar kodda, zip'te, depoda, sohbette yazılmaz; yalnız Render → Environment'ta durur.**
+- **SMS (1.27.0: kod hazır, sağlayıcı bekliyor).** Üç yerli sağlayıcının bağlantısı yazıldı: **Netgsm**, **İletimerkezi**, **Verimor**.
+  Biriyle anlaşınca:
+  1. Sağlayıcıda kurumsal hesap aç → **gönderici başlığı** iste (SMS'te gönderen olarak görünen ad, ör. `ROTA ASISTAN`, en çok 11 karakter).
+     Başlık onayı için şirket belgeleri istenir; onaylanınca panelde görünür.
+  2. Panelde API erişimini aç:
+     - **Netgsm:** API yetkili alt kullanıcı aç → kullanıcı kodu + şifre.
+     - **İletimerkezi:** *Ayarlar › Güvenlik › API Erişimi* → API anahtarı (key) + hash (hash'i panelden kopyala).
+     - **Verimor:** API kullanıcısı aç → kullanıcı adı + şifre.
+     - Sağlayıcı "izinli IP" isterse: Render › rota-sunucu › sağ üstte **Connect** › **Outbound** sekmesindeki adresleri yaz.
+  3. Render › rota-sunucu › **Environment** (YALNIZ burada; zip'e, koda, GitHub'a, sohbete yazılmaz):
+     - `SMS_PROVIDER` = `netgsm` ya da `iletimerkezi` ya da `verimor`
+     - `SMS_HEADER` = onaylı başlık (paneldeki gibi)
+     - Netgsm / Verimor: `SMS_USER` + `SMS_PASS` · İletimerkezi: `SMS_API_KEY` + `SMS_API_HASH`
+     → *Save Changes* → Deploy. **Yönetim › Kodlar**'ın altında "SMS (Netgsm): bağlı ✓" gibi yazar. Biri eksikse "bağlı değil" kalır.
+  4. Dene: kendi numaranla uygulamada **Şifremi unuttum** → SMS gelmeli. Gelmezse Render › **Logs**'ta
+     `[bildirim] SMS (…) gönderilemedi: HTTP … · kod …` satırına bak (numara, metin ve anahtar yazılmaz); kodu sağlayıcıya sor.
+  - Bağlanınca **doğrulama kodları** (şifremi unuttum, telefon doğrulama / değiştirme) SMS'le gider. **Teslim bağlantıları** (her durak
+    bir mesaj; metin uzun olduğu için 2 SMS kredisi) yalnız `SMS_LINKS=1` de yazılırsa sunucudan gider; yazılmazsa kurye bugünkü gibi kendi
+    telefonundan paylaşır. Günlük tavan: kodlar `SMS_DAILY_MAX` (300), bağlantılar `SMS_LINKS_DAILY_MAX` (300).
+  - Giden mesajların hepsi bilgilendirme (kod, teslim bağlantısı); reklam SMS'i yok. Sistem İYS sorgusunu kapalı gönderir
+    (avukat notlarına eklendi). Yalnız cep numarasına (05…) gider.
+- **E-posta:** **Brevo** (ücretsiz; Render'ın ücretsiz planında çalışır): `BREVO_API_KEY` + `MAIL_FROM`. Ya da SMTP (`SMTP_HOST`,
+  `SMTP_PORT` 587, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`; yalnız Render'ın ücretli planında).
+- Hiçbiri tanımlı değilken: kodlar **Yönetim › Kodlar**'da (kişinin kimliğini doğrulayıp sen söylersin); kurye teslim bağlantısını kendi
+  SMS / WhatsApp uygulamasıyla iletir ya da QR gösterir.
+
+## Mağaza satışı (Rota coin) — Google Play / App Store hesapları açılınca
+
+Kod hazır (sunucu 1.25.0 + 1.28.0 iade; uygulama 0.34.0'da `expo-iap` pakette). Fiyatı mağaza belirler ve gösterir (başlangıç ölçütü 1 coin ≈
+10 TL). Ürün kimlikleri iki mağazada da AYNI: `rota_coin_50`, `rota_coin_200`, `rota_coin_500` (tüketilebilir). Bütün anahtarlar GİZLİDİR:
+yalnız Render › Environment'a yazılır; zip'e, GitHub'a, sohbete konmaz.
+
+**Google Play**
+1. Play Console › uygulama › **Para kazanma › Ürünler › Uygulama içi ürünler** → üç ürün (kimlikler yukarıda) → fiyat → **Etkinleştir**.
+2. Google Cloud Console › **IAM ve Yönetici › Hizmet hesapları** → yeni hizmet hesabı → **Anahtarlar › Anahtar ekle › JSON** (iner; GİZLİ).
+   Aynı projede **Google Play Android Developer API**'yi etkinleştir.
+3. Play Console › **Kullanıcılar ve izinler › Yeni kullanıcı davet et** → hizmet hesabının e-postası → uygulama izinleri: **Finansal verileri,
+   siparişleri ve iptal anketi yanıtlarını görüntüleme** + **Siparişleri ve abonelikleri yönetme**.
+4. Render › Environment: `GOOGLE_PLAY_SERVICE_ACCOUNT` = indirdiğin JSON'un tamamı (tek satıra yapıştırılabilir). İadeler bununla kendiliğinden
+   denetlenir; ek kurulum yok.
+5. Deneme: Play Console › **Ayarlar › Lisans testi** → kendi Google hesabın → deneme satın almaları ücretsizdir, hesapta "deneme" diye yazar.
+
+**App Store** (Apple geliştirici hesabı açılınca)
+1. App Store Connect › uygulama › **Uygulama İçi Satın Alımlar** → üç ürün, tür **Tüketilebilir (Consumable)**, kimlikler yukarıda.
+2. **Kullanıcılar ve Erişim › Entegrasyonlar › Uygulama İçi Satın Alma** → anahtar oluştur → `.p8` iner (GİZLİ); **Key ID** ve **Issuer ID**'yi not et.
+3. Render › Environment: `APPLE_IAP_ISSUER_ID`, `APPLE_IAP_KEY_ID`, `APPLE_IAP_PRIVATE_KEY` (`.p8`'in içeriği).
+4. App Store Connect › uygulama › **Uygulama Bilgileri › App Store Sunucu Bildirimleri** → üretim ve sandbox adresi:
+   `https://rota-sunucu.onrender.com/v1/iap/apple/notify`, **Sürüm 2** (iadeler için).
+
+**Gerçek satışa geçerken:** Render'da `COIN_TEST_BUY=0` (test satın alma kapanır). Yönetim › Özet › **Mağaza satışları**: "bağlı ✓", son 30 gün
+satış / iade ve son iade denetimi görünür. Uygulamanın mağaza sürümü EAS derlemesiyle (Expo Go'da satın alma yoktur).
 
 ## İsteğe bağlı ayarlar (Render → Environment) — hiçbiri zorunlu değil
 
@@ -662,7 +781,10 @@ Yönetim **göremez:** mesajlar, adres listeleri (telefonlarda durur), alıcın�
 | `HANDOFF_REVIEW_HOURS` | `24` | Teslim bitince alıcı en çok kaç saat daha yorum yazabilir |
 | `HANDOFF_TTL_HOURS` / `HANDOFF_DAILY_MAX` | `48` / `300` | Alıcı kayıtları en geç kaç saatte silinir / kurye başı günlük bağlantı |
 | `PUBLIC_BASE` | boş | Bağlantı adresi başlangıcı; boşsa Render'ın `RENDER_EXTERNAL_URL`'i |
-| `SMS_PROVIDER` | boş | SMS sağlayıcısı adı (bağdaştırıcı eklendikten sonra) |
+| `SMS_PROVIDER` / `SMS_HEADER` | boş | SMS sağlayıcısı (`netgsm` / `iletimerkezi` / `verimor`) / onaylı gönderici başlığı (yukarıdaki SMS bölümü) |
+| `SMS_USER` `SMS_PASS` / `SMS_API_KEY` `SMS_API_HASH` | boş | Netgsm, Verimor / İletimerkezi giriş bilgileri — yalnız Render'da |
+| `SMS_LINKS` / `SMS_LINKS_DAILY_MAX` | boş / `300` | `1` → teslim bağlantıları da sunucudan SMS'le gider / günlük tavan |
+| `SMS_DAILY_MAX` | `300` | Doğrulama kodu SMS'i günlük tavanı |
 | `SMTP_HOST` `SMTP_PORT` `SMTP_USER` `SMTP_PASS` `SMTP_FROM` `SMTP_STARTTLS` | boş / `587` / … / `1` | E-posta gönderimi (587'de STARTTLS, 465'te SSL) |
 | `ERROR_KEEP_DAYS` / `ERROR_MAX_ROWS` / `ERROR_DAILY_MAX` | `14` / `5000` / `3000` | Hata kayıtları |
 | `DOOR_DAILY_MAX` / `DOOR_TRUST_SCORE` / `DOOR_MERGE_M` | `400` / `2` / `35` | Ortak kapı haritası sınırları |

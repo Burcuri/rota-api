@@ -41,12 +41,16 @@ def run(k=KEY):
 
 def test_off_without_key(monkeypatch):
     monkeypatch.delenv("BACKUP_KEY", raising=False)
-    assert run().status_code == 503
+    r = run()
+    assert r.status_code == 503 and "BACKUP_KEY yok" in r.json()["detail"]
     monkeypatch.setenv("BACKUP_KEY", "kisa-anahtar")  # 24 karakterden kısa: kapalı sayılır
-    assert run("kisa-anahtar").status_code == 503
+    r = run("kisa-anahtar")
+    # 8 Kasım 2026: kısa anahtar artık "yok" değil "çok kısa" der (kullanıcı doğru yazdığını sanıyordu); uzunluğu söylemez
+    assert r.status_code == 503 and "çok kısa" in r.json()["detail"] and "en az 24" in r.json()["detail"] and "12" not in r.json()["detail"]
     h, _ = admin_login()
     assert client.get("/v1/admin/backups", headers=h).json()["enabled"] is False
-    assert client.post("/v1/admin/backups/download", headers=h).status_code == 503
+    r = client.post("/v1/admin/backups/download", headers=h)
+    assert r.status_code == 503 and "çok kısa" in r.json()["detail"]
 
 
 def test_scheduled_backup_is_encrypted_and_complete(key_on):
@@ -57,7 +61,7 @@ def test_scheduled_backup_is_encrypted_and_complete(key_on):
     assert body[:8] == MAGIC and r.headers["content-disposition"].startswith('attachment; filename="rota-yedek-')
     assert b"Yedek Deneme" not in body and me["user"]["id"].encode() not in body  # düz metin yok
     doc = open_backup(body, KEY)
-    assert doc["v"] == 1 and doc["server"] == "1.26.0"
+    assert doc["v"] == 1 and doc["server"] == app.version  # sunucu sürümü dökümde
     names = set(doc["tables"])
     assert {"users", "door_points", "surveys", "ad_bookings", "backup_runs"} <= names
     users = doc["tables"]["users"]
