@@ -115,3 +115,9 @@ p.warn{color:var(--warn);font-weight:700}
 .door-lbl{display:inline-block;padding:1px 6px;border-radius:8px;background:#FFD200;color:#0D1B2A;border:1.5px solid #0D1B2A;font-size:12px;font-weight:800;line-height:16px;white-space:nowrap;box-shadow:0 1px 0 #0D1B2A}
 .door-lbl.ok{background:#00E5D4}
 .pill.warn{border-color:var(--warn);color:var(--warn);background:var(--warn-bg);margin-left:6px;font-size:12px;padding:1px 7px}
+/* 1.28.0 Şikâyetler + mağaza satışları */
+.rep .lnk,.iapbox .lnk{background:none;border:0;padding:0;color:var(--link);font-weight:800;cursor:pointer;text-decoration:underline;font-size:inherit}
+.rep .msgs{margin:8px 0;padding:8px 10px;border-left:4px solid var(--line);background:var(--card2);border-radius:8px}
+.rep .msgs p{margin:4px 0;white-space:pre-wrap;word-break:break-word}
+.rep .msgs .t{color:var(--muted);font-size:12px;margin-right:6px}
+.rep.old{border-color:var(--bad)}
