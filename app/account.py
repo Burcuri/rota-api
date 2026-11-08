@@ -46,13 +46,17 @@ COIN_PACKS = (50, 200, 500)
 # 1.26.0 (kullanıcı kararları 7 Kasım 2026): "bir coin 10 TL gibi görünsün başlangıç ölçütü" → eski örnek fiyatlar 10'a bölündü
 # ("10'a bölelim"); tabela "10 TL yazılsın şimdilik, aylık ödeme". Coin'in gerçek fiyatını mağaza belirler (Play Console / App Store Connect).
 COIN_TL = 10  # 1 Rota coin'in gösterim değeri (TL)
-AD_COIN_PER_DAY = 3  # haritada bir noktada bir günlük reklam = 30 TL (eskiden 30 coin; uygulamadaki adPackages.ts ile aynı)
 PROMO_COIN_PER_DAY = 2  # öne çıkan ilan, gün başına = 20 TL (eskiden 20 coin; uygulamadaki store.tsx ile aynı)
-TABELA_COIN = 1  # tabela reklamı: ayda 1 coin = 10 TL
-TABELA_DAYS = 30  # tabela bir ay sürer; "Uzat" ile bir ay daha
-AD_DAYS = (1, 7, 30)
 PROMO_DAYS = (1, 7, 30)
-AD_PACKAGES = (("p1-1", 1, 1), ("p1-7", 1, 7), ("p1-30", 1, 30), ("p3-7", 3, 7), ("p3-30", 3, 30), ("p5-7", 5, 7))
+# 1.27.0 TEK ÜRÜN — HARİTA TABELASI (kullanıcı kararı 7 Kasım 2026: "O noktada 1 gün durması da 1 ay durmasıda 1 coin (≈ 10 TL)";
+# "bu zaten yukardaki haritada 1 noktada tabela görünmesi dediğim şey"): haritada 1 nokta = logolu tabela, nokta başına AYDA 1 coin.
+# ~~Harita reklamı nokta·gün 3 coin, 1 / 7 / 30 gün, paketler (1.26.0)~~ → kaldırıldı. Eski kayıtlar süresi bitene kadar yayında;
+# uzatılınca onlar da aylık tabela gibi (nokta başına 1 coin, 30 gün).
+TABELA_COIN = 1  # 1 nokta · 1 ay = 1 coin ≈ 10 TL
+TABELA_DAYS = 30  # tabela bir ay sürer; "Uzat" ile bir ay daha
+TABELA_MAX_POINTS = 10  # sponsor bir seferde en çok 10 nokta seçer
+TABELA_MAX_ACTIVE = 50  # hesap başına aynı anda en çok 50 tabela (kuryenin haritası dolmasın)
+TABELA_GAP_M = 30  # aynı hesabın iki tabelası arasında en az 30 m (aynı yere üst üste konmasın)
 SYSTEM_CODE = "SYS-0000000"
 GUIDE_HOURS = 24  # kullanıcı kararı: rehber yedeği 24 saat sonra silinir (uzatılmaz)
 GUIDE_MAX_ITEMS = 3000
@@ -225,19 +229,17 @@ def charge(db: Session, user_id: str, cost: int, kind: str, label: str, ref: str
 
 
 # ------------------------------------------------------------------ reklam
-def package(pid: str) -> dict | None:
-    for i, p, d in AD_PACKAGES:
-        if i == pid:
-            return {"id": i, "points": p, "days": d, "cost": p * d * AD_COIN_PER_DAY,
-                    "title": f"Tek Nokta · {d} gün" if p == 1 else f"{p} Nokta Paketi · {d} gün"}
-    return None
+def gap_m(a_lat: float, a_lon: float, b_lat: float, b_lon: float) -> float:
+    """İki nokta arası metre (küçük mesafeler için yeterli)"""
+    k = math.cos(math.radians((a_lat + b_lat) / 2))
+    return math.hypot((a_lat - b_lat) * 111320.0, (a_lon - b_lon) * 111320.0 * k)
 
 
-def split_cost(total: int, n: int) -> list[int]:
-    """Paket bedeli noktalara EŞİT bölünür, kalan ilk noktaya biner (uygulamadaki splitPackageCost ile aynı)."""
-    n = max(1, int(n))
-    base = total // n
-    return [base + (total - base * n if i == 0 else 0) for i in range(n)]
+def active_signs(db: Session, owner_id: str, t: datetime | None = None) -> list[AdBooking]:
+    """Hesabın yayındaki bütün tabelaları (eski harita reklamları dahil)"""
+    t = t or now()
+    return (db.query(AdBooking).filter(AdBooking.owner_id == owner_id, AdBooking.removed_at.is_(None), AdBooking.ends_at > t)
+            .limit(TABELA_MAX_ACTIVE + 50).all())
 
 
 def ad_out(a: AdBooking, t: datetime, stats: dict | None = None) -> dict:
@@ -245,7 +247,7 @@ def ad_out(a: AdBooking, t: datetime, stats: dict | None = None) -> dict:
         "id": a.id, "label": a.label, "lat": a.lat, "lon": a.lon, "days": a.days, "cost": a.cost, "package": a.package_id or "",
         "group": a.group_id or "", "at": ms(a.starts_at), "endsAt": ms(a.ends_at),
         "active": a.removed_at is None and (utc(a.ends_at) or t) > t,
-        # 1.26.0: harita reklamı ya da TABELA (işletmenin / sponsorun kendi yerinde logolu, aylık)
+        # 1.26.0: harita reklamı ya da TABELA. 1.27.0: yeni kayıtların hepsi tabela; "harita" yalnız eski (1.26.0 ve öncesi) kayıtlarda
         "kind": "tabela" if a.package_id == "tabela" else "harita",
     }
     if stats is not None:
@@ -348,14 +350,14 @@ class PointIn(BaseModel):
 
 
 class AdIn(BaseModel):
-    label: str = Field(default="", max_length=200)
-    points: list[PointIn] = Field(default_factory=list, max_length=5)
-    days: int = 0
-    package: str = Field(default="", max_length=16)
+    label: str = Field(default="", max_length=200)  # 1.27.0: isteğe bağlı (boşsa şirket / tabela adı)
+    points: list[PointIn] = Field(default_factory=list, max_length=TABELA_MAX_POINTS)
+    days: int = 0  # 1.27.0: yok sayılır (eski istemci); süre her zaman TABELA_DAYS
+    package: str = Field(default="", max_length=16)  # 1.27.0: yok sayılır
 
 
 class ExtendIn(BaseModel):
-    days: int = 0  # harita reklamı: 1 / 7 / 30; tabela: 30 (bir ay)
+    days: int = 0  # 1.27.0: yok sayılır; her uzatma bir ay (TABELA_DAYS), nokta başına TABELA_COIN
 
 
 class SeenItem(BaseModel):
@@ -390,9 +392,10 @@ def make_router(user_out: Callable[[User], dict], test_buy: bool = True) -> APIR
 
     seen_win = Window(240, 3600)  # 1.26.0: kurye başına saatte en çok 240 reklam görüntüleme bildirimi
     rules = {
-        "packs": list(COIN_PACKS), "adPerDay": AD_COIN_PER_DAY, "promoPerDay": PROMO_COIN_PER_DAY, "adDays": list(AD_DAYS),
-        "promoDays": list(PROMO_DAYS), "packages": [package(i) for i, _, _ in AD_PACKAGES], "testBuy": test_buy, "guideHours": GUIDE_HOURS,
-        "coinTl": COIN_TL, "tabela": {"cost": TABELA_COIN, "days": TABELA_DAYS},
+        "packs": list(COIN_PACKS), "promoPerDay": PROMO_COIN_PER_DAY, "promoDays": list(PROMO_DAYS), "testBuy": test_buy,
+        "guideHours": GUIDE_HOURS, "coinTl": COIN_TL, "adPerMonth": TABELA_COIN,
+        # 1.27.0 tek ürün: harita tabelası (nokta başına ayda 1 coin)
+        "tabela": {"cost": TABELA_COIN, "days": TABELA_DAYS, "maxPoints": TABELA_MAX_POINTS, "maxActive": TABELA_MAX_ACTIVE, "gapM": TABELA_GAP_M},
     }
 
     def backup_info(db: Session, user_id: str) -> dict | None:
@@ -476,78 +479,60 @@ def make_router(user_out: Callable[[User], dict], test_buy: bool = True) -> APIR
         st = ad_stats(db, [a.id for a in rows])
         return {"items": [ad_out(a, t, st) for a in rows]}
 
-    def tabela_create(b: AdIn, user: User, db: Session) -> dict:
-        """1.26.0 TABELA: işletmede İşletme Profili'ndeki konumda (değiştirilemez), sponsorda haritada bir kez seçilen yerde; logolu,
-        ayda TABELA_COIN coin. Hesap başına aynı anda tek tabela (süresi dolmadan yenisi alınmaz; "Uzat")."""
+    @r.post("/v1/ads")
+    def ad_create(b: AdIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        """1.27.0 HARİTA TABELASI (tek ürün): haritada 1 nokta = logolu tabela; nokta başına 1 ay = TABELA_COIN coin (≈ 10 TL).
+        - İşletme: İşletme Profili'nde işaretlenen konumda TEK tabela (yer seçilmez; kullanıcı kararı 7 Kasım 2026). Yayındayken yenisi
+          alınmaz: Reklamlarım › Uzat.
+        - Sponsor: haritada 1–TABELA_MAX_POINTS nokta (hepsi bir grup); metin isteğe bağlı (boşsa şirket adı). Aynı anda en çok
+          TABELA_MAX_ACTIVE tabela; kendi tabelalarından en az TABELA_GAP_M metre uzak.
+        Eski istemcinin `days` / `package` alanları yok sayılır: bedel her zaman nokta × TABELA_COIN, süre TABELA_DAYS. Coin sunucuda düşer."""
+        if user.active_role not in ("sponsor", "employer"):
+            raise HTTPException(403, "Reklamı sponsor ya da işletme verir")
         t = now()
-        if active_tabela(db, user.id, t) is not None:
-            raise HTTPException(409, "Tabelan zaten yayında; Reklamlarım'dan uzatabilirsin")
-        sign = ""
         if user.active_role == "employer":
+            if active_tabela(db, user.id, t) is not None:
+                raise HTTPException(409, "Tabelan zaten yayında; Reklamlarım'dan uzatabilirsin")
             from .bizcard import business_card  # döngüsel içe aktarma olmasın
             c = business_card(db, user)
             # yalnız İşletme Profili'nde işaretlenen konum (son ilanın başlama noktası değil): kullanıcı kararı 7 Kasım 2026
             if c.get("lat") is None or c.get("lon") is None or c.get("locFrom") != "profil":
                 raise HTTPException(400, "Önce İşletme Profili'nde işletmenin konumunu işaretle; tabela orada görünür")
-            lat, lon = float(c["lat"]), float(c["lon"])
-            sign = _s(c.get("signboard") or "", 40)  # profildeki "tabela adı" varsa o yazar
+            pts = [(float(c["lat"]), float(c["lon"]))]
+            label = _s(c.get("signboard") or "", 40) or _s(display_names(db, {user.id}).get(user.id) or user.name, 40) or "Tabela"
         else:
-            if len(b.points) != 1:
-                raise HTTPException(400, "Tabelanın yerini haritada seç (tek nokta)")
-            lat, lon = b.points[0].lat, b.points[0].lon
-        name = sign or _s(display_names(db, {user.id}).get(user.id) or user.name, 40) or "Tabela"
+            pts = [(p.lat, p.lon) for p in b.points]
+            if not pts:
+                raise HTTPException(400, "Haritada tabelanın yerini seç (dokun)")
+            for i in range(len(pts)):
+                for j in range(i):
+                    if gap_m(*pts[i], *pts[j]) < TABELA_GAP_M:
+                        raise HTTPException(400, f"İki nokta çok yakın: aralarında en az {TABELA_GAP_M} m olsun")
+            mine = active_signs(db, user.id, t)
+            if len(mine) + len(pts) > TABELA_MAX_ACTIVE:
+                raise HTTPException(400, f"Aynı anda en çok {TABELA_MAX_ACTIVE} tabela olabilir (şu an {len(mine)} yayında)")
+            if any(gap_m(la, lo, a.lat, a.lon) < TABELA_GAP_M for la, lo in pts for a in mine):
+                raise HTTPException(409, "Bu yerde zaten tabelan var; Reklamlarım'dan uzatabilirsin")
+            label = _s(b.label, 200)
+            if label:
+                err = ad_label_error(label)
+                if err:
+                    raise HTTPException(400, err)
+            else:
+                label = _s(display_names(db, {user.id}).get(user.id) or user.name, 40) or "Tabela"
         if not ad_win.allow(user.id):
             raise HTTPException(429, "Bugün çok fazla reklam rezervasyonu yapıldı")
-        charge(db, user.id, TABELA_COIN, "ad", f"Tabela reklamı · {name} · {TABELA_DAYS} gün", ref="tabela", ads=True)
-        a = AdBooking(id=uid(), owner_id=user.id, label=name, lat=lat, lon=lon, days=TABELA_DAYS, cost=TABELA_COIN, package_id="tabela",
-                      group_id="", starts_at=t, ends_at=t + timedelta(days=TABELA_DAYS), created_at=t)
-        db.add(a)
-        events.log(db, "ad.tabela", user.id, a.id, days=TABELA_DAYS, cost=TABELA_COIN)
-        db.commit()
-        return {"items": [ad_out(a, t)], "coins": coins_out(db, user.id)}
-
-    @r.post("/v1/ads")
-    def ad_create(b: AdIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
-        """Haritada reklam: serbest (1 nokta · 1 / 7 / 30 gün) ya da paket (N nokta × D gün tek bedel). Coin sunucuda düşer."""
-        if user.active_role not in ("sponsor", "employer"):
-            raise HTTPException(403, "Reklamı sponsor ya da işletme verir")
-        if b.package == "tabela":
-            return tabela_create(b, user, db)
-        if not b.points:
-            raise HTTPException(400, "Haritada reklam noktasını seç")
-        label = _s(b.label, 200)
-        err = ad_label_error(label)
-        if err:
-            raise HTTPException(400, err)
-        pkg = None
-        if b.package:
-            pkg = package(b.package)
-            if pkg is None:
-                raise HTTPException(400, "Böyle bir reklam paketi yok")
-            if len(b.points) != pkg["points"]:
-                raise HTTPException(400, f"Bu pakette haritada {pkg['points']} nokta seçilmeli")
-            days, cost = pkg["days"], pkg["cost"]
-            tx = f"Reklam paketi · {pkg['title']} · {SYSTEM_CODE}"
-        else:
-            if b.days not in AD_DAYS:
-                raise HTTPException(400, "Süre 1, 7 ya da 30 gün olmalı")
-            if len(b.points) != 1:
-                raise HTTPException(400, "Serbest reklam tek noktadır")
-            days, cost = b.days, b.days * AD_COIN_PER_DAY
-            tx = f"Reklam rezervasyonu · {label} · {days} gün"
-        if not ad_win.allow(user.id):
-            raise HTTPException(429, "Bugün çok fazla reklam rezervasyonu yapıldı")
-        group = uid() if pkg else ""
-        charge(db, user.id, cost, "ad", tx, ref=group, ads=True)
-        t = now()
-        parts = split_cost(cost, len(b.points))
+        n = len(pts)
+        cost = n * TABELA_COIN
+        group = uid() if n > 1 else ""
+        charge(db, user.id, cost, "ad", f"Harita tabelası · {label} · {n} nokta · {TABELA_DAYS} gün", ref=group or "tabela", ads=True)
         rows = []
-        for i, p in enumerate(b.points):
-            a = AdBooking(id=uid(), owner_id=user.id, label=label, lat=p.lat, lon=p.lon, days=days, cost=parts[i], package_id=pkg["id"] if pkg else "",
-                          group_id=group, starts_at=t, ends_at=t + timedelta(days=days), created_at=t)
+        for la, lo in pts:
+            a = AdBooking(id=uid(), owner_id=user.id, label=label, lat=la, lon=lo, days=TABELA_DAYS, cost=TABELA_COIN, package_id="tabela",
+                          group_id=group, starts_at=t, ends_at=t + timedelta(days=TABELA_DAYS), created_at=t)
             db.add(a)
             rows.append(a)
-        events.log(db, "ad.create", user.id, group or rows[0].id, n=len(rows), days=days, cost=cost)
+        events.log(db, "ad.tabela", user.id, group or rows[0].id, n=n, days=TABELA_DAYS, cost=cost)
         db.commit()
         return {"items": [ad_out(a, t) for a in rows], "coins": coins_out(db, user.id)}
 
@@ -567,24 +552,22 @@ def make_router(user_out: Callable[[User], dict], test_buy: bool = True) -> APIR
 
     @r.post("/v1/ads/{ad_id}/extend")
     def ad_extend(ad_id: str, b: ExtendIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
-        """1.26.0 TEK DOKUNUŞLA UZATMA: aynı noktada aynı reklam N gün daha (tabela: bir ay daha). Süresi dolmuş (pasif) reklam da
-        yeniden açılır: bitiş = (bitiş geçmediyse bitiş, geçtiyse şimdi) + N gün. Coin sunucuda düşer."""
+        """TEK DOKUNUŞLA UZATMA. 1.27.0: her tabela (eski harita reklamı da) bir ay daha = TABELA_COIN coin. Süresi dolmuş tabela aynı
+        yerde yeniden açılır: bitiş = (bitiş geçmediyse bitiş, geçtiyse şimdi) + TABELA_DAYS. Coin sunucuda düşer."""
         a = db.get(AdBooking, ad_id)
         if a is None or a.owner_id != user.id or a.removed_at is not None:
             raise HTTPException(404, "Reklam bulunamadı")
-        tab = a.package_id == "tabela"
-        if tab:
-            days, cost = TABELA_DAYS, TABELA_COIN
-            other = active_tabela(db, user.id)
-            if other is not None and other.id != a.id:
+        t = now()
+        if (utc(a.ends_at) or t) <= t:  # yeniden yayın: yayındaki tabelalarla çakışmasın
+            mine = [x for x in active_signs(db, user.id, t) if x.id != a.id]
+            if user.active_role == "employer" and any(x.package_id == "tabela" for x in mine):
                 raise HTTPException(409, "Başka bir tabelan zaten yayında")
-            tx = f"Tabela reklamı uzatma · {a.label} · {days} gün"
-        else:
-            if b.days not in AD_DAYS:
-                raise HTTPException(400, "Süre 1, 7 ya da 30 gün olmalı")
-            days, cost = b.days, b.days * AD_COIN_PER_DAY
-            tx = f"Reklam uzatma · {a.label} · {days} gün"
-        charge(db, user.id, cost, "ad", tx, ref=a.id, ads=True)
+            if len(mine) + 1 > TABELA_MAX_ACTIVE:
+                raise HTTPException(400, f"Aynı anda en çok {TABELA_MAX_ACTIVE} tabela olabilir")
+            if any(gap_m(a.lat, a.lon, x.lat, x.lon) < TABELA_GAP_M for x in mine):
+                raise HTTPException(409, "Bu yerde başka bir tabelan yayında")
+        days, cost = TABELA_DAYS, TABELA_COIN
+        charge(db, user.id, cost, "ad", f"Tabela uzatma · {a.label} · {days} gün", ref=a.id, ads=True)
         a = db.get(AdBooking, ad_id)
         t = now()
         end = utc(a.ends_at) or t

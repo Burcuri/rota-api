@@ -71,6 +71,12 @@ KINDS = {
     "user.sessions_out": "Diğer cihazlardan çıkış yaptı",
     "user.deleted": "Hesabını sildi",
     "user.blacklist_inh": "Silinen kara liste hesabının numarasıyla açıldı",
+    # 1.28.0: şikâyet, genel engelleme, mağaza iadesi
+    "user.block": "Birini engelledi (mesaj, harita, takip)",
+    "report.new": "Şikâyet gönderdi",
+    "report.close": "Hakkındaki şikâyet kapatıldı",
+    "coin.store": "Mağazadan coin aldı",
+    "coin.refund": "Mağaza coin satın almasını iade etti",
 }
 
 

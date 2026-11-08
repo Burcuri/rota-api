@@ -32,6 +32,13 @@ def enabled() -> bool:
     return len(backup_key()) >= MIN_KEY
 
 
+def off_reason() -> str:
+    """Yedek kapalıyken nedeni (8 Kasım 2026: kısa anahtar da "yok" diye görünüyordu, kullanıcı doğru yazdığını sanıyordu)."""
+    if not backup_key():
+        return "Yedek kapalı: sunucuda BACKUP_KEY yok (Render › Environment'a ekleyip deploy et)"
+    return f"Yedek kapalı: BACKUP_KEY çok kısa (en az {MIN_KEY} karakter; Render'da Generate ile üret, sonra deploy et)"
+
+
 def derive(key: str, salt: bytes) -> bytes:
     return HKDF(algorithm=hashes.SHA256(), length=32, salt=salt, info=INFO).derive(key.encode("utf-8"))
 

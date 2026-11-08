@@ -63,6 +63,8 @@ ADD_COLUMNS = [
     ("users", "phone_hash", "VARCHAR(64)"),
     # 1.26.0: "reklamın yarın bitiyor" hatırlatması
     ("ad_bookings", "reminded_at", "TIMESTAMP WITH TIME ZONE"),
+    # 1.28.0: mağaza iadesi (Google Play iptal edilen satın almalar / App Store REFUND bildirimi) → coin düşülür
+    ("store_purchases", "refunded_at", "TIMESTAMP WITH TIME ZONE"),
 ]
 
 # create_all'un yeni kurulumda açtığı dizin adlarıyla aynı adlar (ix_<tablo>_<sütun>)

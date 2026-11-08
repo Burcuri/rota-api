@@ -22,6 +22,7 @@ from .auth import current_user
 from .pushes import queue as push_queue
 from .db import SessionLocal, get_db
 from .limits import Window
+from .blocks import add_block
 from .models import MapBlock, Nudge, User
 
 KINDS = ("wave", "nudge", "hello")
@@ -196,12 +197,11 @@ def make_router(visible_min: int = 10, nudge_hourly: int = 12, nudge_pair_min: i
 
     @r.post("/v1/map/block")
     def block(body: IdIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        """1.28.0: engelleme HER YERDE geçerli (mesaj, harita, selam, canlı takip, adres listesi) — blocks.py. Adı geriye uyum için aynı."""
         if body.id == user.id or db.get(User, body.id) is None:
             raise HTTPException(400, "Geçersiz kişi")
-        if not db.query(MapBlock).filter(MapBlock.user_id == user.id, MapBlock.blocked_id == body.id).first():
-            db.add(MapBlock(user_id=user.id, blocked_id=body.id))
-            events.log(db, "map.block", user.id, target=body.id)
-        db.query(Nudge).filter(Nudge.from_id == body.id, Nudge.to_id == user.id).delete(synchronize_session=False)
+        if add_block(db, user.id, body.id):
+            events.log(db, "user.block", user.id, target=body.id)
         db.commit()
         return {"ok": True}
 

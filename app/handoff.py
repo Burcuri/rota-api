@@ -332,7 +332,7 @@ def make_router(add_pin, ttl_hours: float = 48, daily_max: int = 300, review_hou
             "mode": h.mode,
             "phoneOk": bool(h.phone),
             "emailOk": bool(h.email),
-            "providers": {"sms": notify.sms_enabled(), "email": notify.email_enabled()},
+            "providers": {"sms": notify.sms_links_enabled(), "email": notify.email_enabled()},
             "sendCount": h.send_count,
             "expiresAt": iso(h.expires_at),
             "arrivedAt": iso(h.arrived_at),
@@ -361,7 +361,9 @@ def make_router(add_pin, ttl_hours: float = 48, daily_max: int = 300, review_hou
             subject, body = DEPART_EMAIL_SUBJECT, DEPART_EMAIL_TEXT
         else:
             subject, body = EMAIL_SUBJECT, EMAIL_TEXT
-        sms = bool(h.phone.startswith("05") and notify.sms_enabled() and notify.send_sms(h.phone, share_text(link, purpose)))
+        # 1.27.0: bağlantı SMS'i ayrı anahtarla (SMS_LINKS=1) ve günlük tavanla: her durak para demek
+        sms = bool(h.phone.startswith("05") and notify.sms_links_enabled() and notify.day_budget("link", notify.SMS_LINKS_DAILY_MAX)
+                   and notify.send_sms(h.phone, share_text(link, purpose)))
         mail = bool(h.email and notify.email_enabled() and notify.send_email(h.email, subject, body.format(link=link, hours=int(ttl_hours))))
         h.send_count = (h.send_count or 0) + 1
         if sms or mail:
@@ -476,7 +478,7 @@ def make_router(add_pin, ttl_hours: float = 48, daily_max: int = 300, review_hou
                 events.log(db, "handoff.depart", user.id, h.id)
                 items = push_items(db, h)
                 notified["push"] = len(items)
-                provider = (notify.sms_enabled() and h.phone.startswith("05")) or (notify.email_enabled() and bool(h.email))
+                provider = (notify.sms_links_enabled() and h.phone.startswith("05")) or (notify.email_enabled() and bool(h.email))
                 if not items and provider and h.send_count < MAX_SENDS:
                     sent = deliver(request, h, "depart")
                     notified["sms"], notified["email"] = sent["sms"], sent["email"]

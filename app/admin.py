@@ -36,7 +36,7 @@ from .standing import mark_out, marks_of, standings
 from .follow import trail_of
 from .pushes import drop_user as drop_user_pushes
 from .limits import Window, client_ip
-from .models import Admin, AdminAudit, ConsentLog, Device, DoorPoint, Event, Follow, Handoff, Job, Review, Reward, RewardClaim, User, UserMark, now
+from .models import Admin, AdminAudit, ConsentLog, Device, DoorPoint, Event, Follow, Handoff, Job, Report, Review, Reward, RewardClaim, User, UserMark, now
 
 ROLES = ("courier", "employer", "sponsor")
 ADMIN_TOKEN_HOURS = 12
@@ -153,6 +153,24 @@ def audit(db: Session, request: Request | None, a: Admin | None, action: str, ta
         admin_id=a.id if a else None, admin_name=(a.username if a else name)[:32], action=action[:40], target_type=target_type[:12],
         target_id=target_id[:40], detail=detail[:500], ip=client_ip(request)[:64] if request else "",
     ))
+
+
+def oldest_open_hours(db: Session) -> float:
+    """En eski açık şikâyetin yaşı (saat; yoksa 0)"""
+    t = db.query(func.min(Report.created_at)).filter(Report.status == "open").scalar()
+    if t is None:
+        return 0.0
+    t = t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+    return round((now() - t).total_seconds() / 3600, 1)
+
+
+def ban_user(db: Session, u: User, reason: str) -> int:
+    """Üyeyi uygulamadan men eder: giriş yapamaz, açık oturumları kapanır, açık ilanları kaldırılır. Kapanan ilan sayısını döner.
+    commit ETMEZ. (1.28.0: şikâyet ekranı da kullanır — reports.py)"""
+    u.banned, u.banned_reason, u.banned_at = True, reason[:300], now()
+    u.token_version = (u.token_version or 0) + 1
+    drop_user_pushes(db, u.id)  # 1.20.0: çıkış yapan cihazlara bildirim gitmesin
+    return db.query(Job).filter(Job.employer_id == u.id, Job.status.in_(("open", "applied"))).update({"status": "closed"}, synchronize_session=False)
 
 
 # ------------------------------------------------------------------ istek gövdeleri
@@ -415,6 +433,9 @@ def make_router(keep_days_errors: float = 14, follow_keep_hours: float = 48) -> 
             "reviews": db.query(func.count(Review.id)).scalar() or 0,
             "reviewsHidden": db.query(func.count(Review.id)).filter(Review.hidden.is_(True)).scalar() or 0,
             "admins": db.query(func.count(Admin.id)).scalar() or 0,
+            # 1.28.0: açık şikâyetler ve en eskisinin yaşı (saat) — mağaza şartı: 24 saat içinde incelenir
+            "reportsOpen": db.query(func.count(Report.id)).filter(Report.status == "open").scalar() or 0,
+            "reportsOldestH": oldest_open_hours(db),
         }
 
     @r.get("/v1/admin/errors")
@@ -565,10 +586,7 @@ def make_router(keep_days_errors: float = 14, follow_keep_hours: float = 48) -> 
         reason = (b.reason or "").strip()
         if not reason:
             raise HTTPException(400, "Men nedenini yazın (kullanıcıya gösterilir)")
-        u.banned, u.banned_reason, u.banned_at = True, reason[:300], now()
-        u.token_version = (u.token_version or 0) + 1
-        drop_user_pushes(db, u.id)  # 1.20.0: çıkış yapan cihazlara bildirim gitmesin
-        closed = db.query(Job).filter(Job.employer_id == u.id, Job.status.in_(("open", "applied"))).update({"status": "closed"}, synchronize_session=False)
+        closed = ban_user(db, u, reason)
         audit(db, request, a, "user_ban", "user", u.id, f"{reason[:200]} · kapanan ilan: {closed}")
         events.log(db, "user.banned", u.id, by=a.username, reason=reason[:100])
         db.commit()

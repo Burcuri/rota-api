@@ -691,8 +691,9 @@ class StorePurchase(Base):
     product_id = Column(String(100), nullable=False, default="")
     coins = Column(Integer, nullable=False)
     env = Column(String(16), nullable=False, default="Production")  # Production | Sandbox | Test
-    status = Column(String(16), nullable=False, default="credited")
+    status = Column(String(16), nullable=False, default="credited")  # credited | refunded (1.28.0: mağaza iade etti → coin düşüldü)
     created_at = Column(DateTime(timezone=True), default=now, index=True)
+    refunded_at = Column(DateTime(timezone=True))  # 1.28.0
     __table_args__ = (UniqueConstraint("store", "txn_key", name="uq_store_txn"),)
 
 
@@ -868,3 +869,27 @@ class AuthThrottle(Base):
     first_at = Column(DateTime(timezone=True), default=now)
     last_at = Column(DateTime(timezone=True), default=now, index=True)
     locked_until = Column(DateTime(timezone=True), index=True)
+
+
+class Report(Base):
+    """ŞİKÂYET (1.28.0; kullanıcı isteği 9 Kasım 2026: "Sohbete Şikâyet et + Engelle … bunu bitir" — App Store 1.2 ve Google Play UGC
+    şartı). Mesajlar sunucuda TUTULMADIĞI için şikâyet eden, şikâyet ettiği mesajı ve o kişinin bu sohbetteki son birkaç mesajını kendisi
+    yollar (`context`, JSON). Yönetim 24 saat içinde inceler: işlem yok / uyar / hesabı kapat. Kapatılan şikâyet REPORT_KEEP_DAYS (180) gün
+    sonra silinir."""
+
+    __tablename__ = "reports"
+    id = Column(String(32), primary_key=True, default=uid)
+    reporter_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    target_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
+    kind = Column(String(12), nullable=False, default="user")  # message | user
+    reason = Column(String(16), nullable=False, default="other")  # spam | abuse | threat | fraud | sexual | other
+    note = Column(String(300), nullable=False, default="")
+    place = Column(String(12), nullable=False, default="dm")  # dm | group | map | other
+    context = Column(Text, nullable=False, default="")
+    blocked = Column(Boolean, nullable=False, default=False)  # şikâyet eden aynı anda engelledi mi
+    status = Column(String(8), nullable=False, default="open", index=True)  # open | closed
+    action = Column(String(8), nullable=False, default="")  # none | warn | ban
+    admin_note = Column(String(300), nullable=False, default="")
+    closed_by = Column(String(32), nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), default=now, index=True)
+    closed_at = Column(DateTime(timezone=True))

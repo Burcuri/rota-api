@@ -21,7 +21,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from .admin import audit, current_admin
-from .backup_core import MAGIC, backup_key, enabled, make_backup, open_backup  # noqa: F401 (open_backup: testler ve geri yükleme)
+from .backup_core import MAGIC, backup_key, enabled, make_backup, off_reason, open_backup  # noqa: F401 (open_backup: testler ve geri yükleme)
 from .db import SessionLocal, get_db
 from .limits import Window, client_ip
 from .models import Admin, BackupRun, now, uid
@@ -85,7 +85,7 @@ def make_router(server_version: str) -> APIRouter:
     def scheduled(request: Request, x_backup_key: str = Header(default="")):
         """Gece yedeği (GitHub Actions). Başlık: X-Backup-Key = BACKUP_KEY."""
         if not enabled():
-            raise HTTPException(503, "Yedek kapalı: sunucuda BACKUP_KEY yok")
+            raise HTTPException(503, off_reason())
         ip = client_ip(request)
         if bad_win.count(ip) >= 10:
             raise HTTPException(429, "Çok fazla yanlış deneme")
@@ -103,7 +103,7 @@ def make_router(server_version: str) -> APIRouter:
     def admin_download(request: Request, a: Admin = Depends(current_admin), db: Session = Depends(get_db)):
         """Yönetici şimdi yedek indirir (şifreli; açmak için BACKUP_KEY gerekir)."""
         if not enabled():
-            raise HTTPException(503, "Yedek kapalı: Render › Environment'a BACKUP_KEY eklenmeli")
+            raise HTTPException(503, off_reason())
         def done(size: int, tables: int, rows: int) -> None:
             audit(db, request, a, "backup_download", "backup", "", f"{tables} tablo · {rows} satır · {size} bayt")
             db.commit()

@@ -38,6 +38,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from . import events
 from .auth import current_user
+from .blocks import pair_blocked
 from .pushes import queue as push_queue
 from .db import SessionLocal, get_db
 from .limits import Window
@@ -269,6 +270,8 @@ def make_router(
             raise HTTPException(404, "Kurye bulunamadı")
         if c.active_role != "courier":
             raise HTTPException(400, "Bu kişi şu an kurye modunda değil")
+        if pair_blocked(db, user.id, c.id):  # 1.28.0: engel varsa takip isteği gönderilemez (kime "engellendin" denmez)
+            raise HTTPException(403, "Bu kişiyle şu an işlem yapılamıyor")
         open_ = db.query(Follow).filter(Follow.employer_id == user.id, Follow.courier_id == c.id, Follow.status.in_(("asked", "active"))).first()
         if open_ is not None and check(db, open_):  # aynı kurye için açık kayıt: yeni satır açılmaz
             db.commit()

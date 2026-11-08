@@ -47,6 +47,7 @@ from .bizcard import make_router as make_bizcard_router
 from .points import make_router as make_points_router
 from .account import PROMO_COIN_PER_DAY, active_tabela, charge as coin_charge, make_router as make_account_router, ms as ms_of
 from .iap import make_router as make_iap_router
+from .reports import make_router as make_reports_router, purge as reports_purge
 from .marks import make_router as make_marks_router
 from .nearby import make_router as make_nearby_router
 from .vehicle import make_router as make_vehicle_router, withdraw as vehicle_withdraw
@@ -138,6 +139,7 @@ async def lifespan(_app):
     points_router.start_cleaner()  # 1.15.0: ödül süreleri (7 gün kargo / 14 gün cevap), 12 ay puan düşmesi, eski kayıtlar
     account_router.start_cleaner()  # 1.17.0: 24 saati dolan rehber yedeklerini, çok eski reklam kayıtlarını siler
     push_router.start_cleaner()  # 1.19.0: Expo bildirim biletlerini denetler (cihazı kalmayan jetonu siler)
+    iap_router.start_refund_watch()  # 1.28.0: Google Play iadelerini 6 saatte bir denetler (anahtar yoksa bir şey yapmaz)
     threading.Thread(target=_housekeeping_loop, name="housekeeping", daemon=True).start()
     # 1.22.0: resmi il / ilçe / mahalle listesi (kapı katmanının düzgün yazımı) arka planda yüklenir; ilk kapı bildirimi beklemesin
     threading.Thread(target=places.data, name="places-load", daemon=True).start()
@@ -156,13 +158,14 @@ def _housekeeping_loop():
                 errors_router.purge(db)
                 admin_router.purge(db, EVENT_KEEP_DAYS, AUDIT_KEEP_DAYS, REVIEW_KEEP_DAYS, EVENT_MAX_ROWS)
                 sec.purge(db)  # 1.20.0: süresi dolan doğrulama kodları ve eski giriş kilidi satırları
+                reports_purge(db)  # 1.28.0: kapatılalı 180 günü geçen şikâyetler
             finally:
                 db.close()
         except Exception as e:
             print("[temizlik] hata:", type(e).__name__, flush=True)
 
 
-app = FastAPI(title="Rota Asistan", version="1.26.0", lifespan=lifespan)
+app = FastAPI(title="Rota Asistan", version="1.28.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -247,7 +250,9 @@ app.include_router(make_marks_router())  # 1.16.0: sponsor karnesi, öne çıkar
 # 1.17.0: hesap verisi sunucuda tek kaynak (bölümler + eşitleme saati), coin defteri, reklam deposu, öne çıkan ilan, 24 saatlik rehber yedeği
 account_router = make_account_router(lambda u: user_out(u), COIN_TEST_BUY)
 app.include_router(account_router)
-app.include_router(make_iap_router())  # 1.25.0: Google Play / App Store coin satın alması (anahtarlar Render'da; yoksa kapalı)
+iap_router = make_iap_router()  # 1.25.0: Google Play / App Store coin satın alması (anahtarlar Render'da; yoksa kapalı); 1.28.0: iadeler
+app.include_router(iap_router)
+app.include_router(make_reports_router())  # 1.28.0: şikâyet (sohbet / kullanıcı) + yönetim › Şikâyetler
 surveys_router = make_surveys_router()  # 1.26.0: anketler sunucuda (yönetim yazar, kurye yanıtlar, ortalama ≥3 yanıtla; arşiv silinmez)
 app.include_router(surveys_router)
 backup_router = make_backup_router(app.version)  # 1.26.0: şifreli veritabanı yedeği (gece GitHub Actions + yönetimden indirme; BACKUP_KEY Render'da)

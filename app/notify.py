@@ -7,30 +7,178 @@ doğrulama kodları yönetim panelinde görünür (app/security.py).
      gönderen adresi; isteğe bağlı MAIL_FROM_NAME) yazılır. HTTPS ile gider — Render'ın ÜCRETSİZ planı SMTP kapılarını (25 / 465 / 587)
      26 Eylül 2025'ten beri kapattığı için ücretsiz planda çalışan yol budur.
   2) SMTP: SMTP_HOST, SMTP_PORT (587), SMTP_USER, SMTP_PASS, SMTP_FROM (yalnız Render'ın ÜCRETLİ planında çalışır).
-- SMS: bir SMS sağlayıcısı seçilip hesap açılınca SMS_PROVIDER ve sağlayıcının anahtarları ortama yazılır; sağlayıcı bağdaştırıcısı
-  PROVIDERS içine eklenir (aşağıda örnek yeri). Sağlayıcı yokken sms_enabled() False döner.
+- SMS (1.27.0; kullanıcı: "kod olarak yapman gerekeni yap sonra sms olarak yerli bir şirketle anlaşalım"): üç yerli sağlayıcının
+  bağdaştırıcısı HAZIR — Netgsm, İletimerkezi, Verimor. Hesap açılıp gönderici başlığı onaylanınca YALNIZ Render ortamına yazılır:
+    SMS_PROVIDER = netgsm | iletimerkezi | verimor
+    SMS_HEADER   = onaylı gönderici başlığı (ör. ROTA ASISTAN; sağlayıcı panelindeki gibi, en çok 11 karakter)
+    netgsm:        SMS_USER (abone no / kullanıcı kodu), SMS_PASS (API yetkili alt kullanıcının şifresi)
+    iletimerkezi:  SMS_API_KEY, SMS_API_HASH (panel › Ayarlar › Güvenlik › API Erişimi; hash panelden kopyalanır, hesaplanmaz)
+    verimor:       SMS_USER (API kullanıcı adı, 90850… gibi), SMS_PASS
+  Biri eksikse sms_enabled() False döner (deneme modu sürer: kodlar yönetim › Kodlar'da). Bütün mesajlar BİLGİLENDİRME (doğrulama
+  kodu, teslim bağlantısı): İYS sorgusu kapalı gönderilir (ticari ileti değildir). Yalnız cep numarasına (05…) gider.
+  Sağlayıcı bağlanınca DOĞRULAMA KODLARI SMS'le gider. Teslim bağlantıları (her durak 1 SMS, metin uzun: 2 SMS kredisi) ayrıca
+  SMS_LINKS=1 yazılırsa sunucudan gider; yazılmazsa kurye bugünkü gibi kendi telefonundan paylaşır. Günlük tavan: SMS_LINKS_DAILY_MAX (300).
 Gönderim hatası kuryeyi bloklamaz: False döner, bağlantı kuryeye gösterilir.
 """
+import base64
 import html
 import json
 import os
+import re
 import smtplib
 import ssl
+import threading
+import urllib.error
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from typing import Callable
 
 BREVO_URL = "https://api.brevo.com/v3/smtp/email"
+NETGSM_URL = "https://api.netgsm.com.tr/sms/rest/v2/send"
+ILETIMERKEZI_URL = "https://api.iletimerkezi.com/v1/send-sms/json"
+VERIMOR_URL = "https://sms.verimor.com.tr/v2/send.json"
 
-# SMS sağlayıcı bağdaştırıcıları: ad -> (to, text) -> bool. Henüz sağlayıcı seçilmedi: boş.
-PROVIDERS: dict[str, Callable[[str, str], bool]] = {}
+
+def _env(k: str) -> str:
+    return os.getenv(k, "").strip()
+
+
+def gsm10(phone: str) -> str:
+    """Cep numarası 10 hane (5xxxxxxxxx); cep değilse ''. Sabit hatta SMS gitmez."""
+    s = re.sub(r"\D", "", phone or "")
+    if s.startswith("90") and len(s) == 12:
+        s = s[2:]
+    if s.startswith("0") and len(s) == 11:
+        s = s[1:]
+    return s if re.fullmatch(r"5\d{9}", s) else ""
+
+
+def _post_json(url: str, body: dict, headers: dict | None = None, timeout: int = 12) -> tuple[int, str]:
+    req = urllib.request.Request(url, data=json.dumps(body, ensure_ascii=False).encode("utf-8"), method="POST",
+                                 headers={"Content-Type": "application/json; charset=utf-8", "Accept": "application/json", **(headers or {})})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return int(r.status), r.read(65536).decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        try:
+            raw = e.read(65536).decode("utf-8", "replace")
+        except Exception:
+            raw = ""
+        return int(e.code), raw
+
+
+def _log_fail(name: str, status: int, code: str) -> None:
+    # numara, metin ve anahtar günlüğe YAZILMAZ
+    print(f"[bildirim] SMS ({name}) gönderilemedi: HTTP {status} · kod {code or '?'}", flush=True)
+
+
+def _netgsm(to: str, text: str) -> bool:
+    """Netgsm REST v2: Basic yetki (kullanıcı kodu:şifre), başarı kodu "00"."""
+    no = gsm10(to)
+    if not no:
+        return False
+    auth = base64.b64encode(f"{_env('SMS_USER')}:{_env('SMS_PASS')}".encode("utf-8")).decode("ascii")
+    body = {"msgheader": _env("SMS_HEADER"), "encoding": "TR", "iysfilter": "0", "messages": [{"msg": text, "no": no}]}
+    status, raw = _post_json(NETGSM_URL, body, {"Authorization": "Basic " + auth})
+    try:
+        code = str(json.loads(raw).get("code", ""))
+    except Exception:
+        code = ""
+    ok = status == 200 and code == "00"
+    if not ok:
+        _log_fail("Netgsm", status, code)
+    return ok
+
+
+def _iletimerkezi(to: str, text: str) -> bool:
+    """İletimerkezi v1 JSON: anahtar + panelin verdiği hash; başarı response.status.code "200"."""
+    no = gsm10(to)
+    if not no:
+        return False
+    body = {"request": {
+        "authentication": {"key": _env("SMS_API_KEY"), "hash": _env("SMS_API_HASH")},
+        "order": {"sender": _env("SMS_HEADER"), "iys": "0", "message": {"text": text, "receipents": {"number": [no]}}},
+    }}
+    status, raw = _post_json(ILETIMERKEZI_URL, body)
+    try:
+        code = str(json.loads(raw)["response"]["status"]["code"])
+    except Exception:
+        code = ""
+    ok = status == 200 and code == "200"
+    if not ok:
+        _log_fail("İletimerkezi", status, code)
+    return ok
+
+
+def _verimor(to: str, text: str) -> bool:
+    """Verimor v2 JSON: kullanıcı / şifre gövdede; 200 = kampanya numarası (düz metin)."""
+    no = gsm10(to)
+    if not no:
+        return False
+    body = {"username": _env("SMS_USER"), "password": _env("SMS_PASS"), "source_addr": _env("SMS_HEADER"), "datacoding": 1,
+            "is_commercial": False, "messages": [{"msg": text, "dest": "90" + no}]}
+    status, raw = _post_json(VERIMOR_URL, body)
+    ok = status == 200 and raw.strip().isdigit()
+    if not ok:
+        _log_fail("Verimor", status, raw.strip()[:40] if status != 200 else "")
+    return ok
+
+
+# SMS sağlayıcı bağdaştırıcıları: ad -> (to, text) -> bool
+PROVIDERS: dict[str, Callable[[str, str], bool]] = {"netgsm": _netgsm, "iletimerkezi": _iletimerkezi, "verimor": _verimor}
+# Sağlayıcının çalışması için gereken ortam değişkenleri (biri eksikse SMS kapalı sayılır)
+NEEDS: dict[str, tuple[str, ...]] = {
+    "netgsm": ("SMS_HEADER", "SMS_USER", "SMS_PASS"),
+    "iletimerkezi": ("SMS_HEADER", "SMS_API_KEY", "SMS_API_HASH"),
+    "verimor": ("SMS_HEADER", "SMS_USER", "SMS_PASS"),
+}
+
+
+def sms_provider() -> str:
+    """Kullanılabilir sağlayıcının adı ya da '' (anahtarlar eksik / tanımsız)."""
+    name = _env("SMS_PROVIDER").lower()
+    if name not in PROVIDERS:
+        return ""
+    return name if all(_env(k) for k in NEEDS.get(name, ())) else ""
+
+
+def _on(k: str) -> bool:
+    return _env(k).lower() in ("1", "true", "yes", "on", "evet", "açık")
+
+
+SMS_LINKS_DAILY_MAX = int(os.getenv("SMS_LINKS_DAILY_MAX", "300") or "300")
+_TR = timezone(timedelta(hours=3))
+_budget_lock = threading.Lock()
+_budget: dict = {"day": "", "n": {}}
+
+
+def day_budget(kind: str, limit: int) -> bool:
+    """Türkiye günü başına SMS tavanı (bellek içi; sunucu yeniden başlayınca sıfırlanır — asıl sınır sağlayıcıdaki ön ödemeli kredi)."""
+    day = datetime.now(_TR).date().isoformat()
+    with _budget_lock:
+        if _budget["day"] != day:
+            _budget.update(day=day, n={})
+        n = _budget["n"].get(kind, 0)
+        if n >= limit:
+            return False
+        _budget["n"][kind] = n + 1
+        return True
+
+
+def reset_budget() -> None:  # testler için
+    with _budget_lock:
+        _budget.update(day="", n={})
 
 
 class _Default:
     """Gerçek ortam değişkenlerine bakan varsayılan arka uç. Testler `set_backend` ile sahtesini koyar."""
 
     def sms_enabled(self) -> bool:
-        return os.getenv("SMS_PROVIDER", "").strip().lower() in PROVIDERS
+        return bool(sms_provider())
+
+    def sms_links_enabled(self) -> bool:
+        return self.sms_enabled() and _on("SMS_LINKS")
 
     def email_enabled(self) -> bool:
         return self._brevo() or bool(os.getenv("SMTP_HOST", "").strip() and os.getenv("SMTP_FROM", "").strip())
@@ -56,7 +204,7 @@ class _Default:
             return 200 <= r.status < 300
 
     def send_sms(self, to: str, text: str) -> bool:
-        fn = PROVIDERS.get(os.getenv("SMS_PROVIDER", "").strip().lower())
+        fn = PROVIDERS.get(sms_provider())
         if not fn:
             return False
         try:
@@ -112,6 +260,12 @@ def set_backend(b) -> None:  # testler için
 
 def sms_enabled() -> bool:
     return _backend.sms_enabled()
+
+
+def sms_links_enabled() -> bool:
+    """Teslim / konum / yola çıktı bağlantıları sunucudan SMS'le gitsin mi (SMS_LINKS=1). Sahte arka uçta sms_enabled() ile aynı."""
+    fn = getattr(_backend, "sms_links_enabled", None)
+    return bool(fn() if fn else _backend.sms_enabled())
 
 
 def email_enabled() -> bool:
