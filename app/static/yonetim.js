@@ -325,8 +325,29 @@
   }
 
   // ------------------------------------------------------------------ 1.28.0: Şikâyetler (App Store 1.2 / Google Play: 24 saat içinde incelenir)
-  const RPLACE = { dm: 'birebir sohbet', group: 'grup sohbeti', map: 'harita', other: 'diğer' };
-  const RACT = { none: 'İşlem yok', warn: 'Uyarıldı', ban: 'Hesap kapatıldı' };
+  const RPLACE = { dm: 'birebir sohbet', group: 'grup sohbeti', map: 'harita', other: 'diğer', ad: '🪧 harita tabelası', job: '📋 iş ilanı', card: '🏪 işletme kartı' };
+  const RACT = { none: 'İşlem yok', warn: 'Uyarıldı', ban: 'Hesap kapatıldı', remove: 'İçerik kaldırıldı' };
+  // 1.29.0: içerik şikâyeti (tabela / ilan / işletme kartı) — "kaldır" düğmesinin adı ve onay sorusu
+  const RREMOVE = {
+    ad: ['Tabelayı kaldır', 'Tabela (aynı paketin bütün noktaları) kuryelerin haritasından insin mi? Coin iade edilmez; sahibine duyuru gider.'],
+    job: ['İlanı kaldır', 'İlan kapansın mı (bağlı görev ve canlı takip de biter)? Sahibine duyuru gider.'],
+    card: ['Logoyu kaldır', 'İşletmenin logosu kaldırılsın mı (kartta ve tabelalarda görünmez)? Sahibine duyuru gider.'],
+  };
+  function repContent(x) {
+    const c = x.content || {};
+    const gone = x.live && x.live.removed;
+    const box = h('div', { class: 'msgs', 'aria-label': 'Şikâyet edilen içerik', 'data-content': x.place });
+    const logo = c.logo && x.target && x.target.id ? h('img', { src: '/v1/logo/' + encodeURIComponent(x.target.id) + '?r=' + encodeURIComponent(x.id), alt: 'logo', class: 'logo-img', loading: 'lazy' }) : null;
+    let rows = [];
+    if (x.place === 'ad') rows = [['Tabela yazısı', c.label || '—'], ['Nokta', c.lat != null ? Number(c.lat).toFixed(4) + ', ' + Number(c.lon).toFixed(4) : '—'], ['Bitiş', c.endsAt ? dateOnly(c.endsAt) : '—']];
+    else if (x.place === 'job') rows = [['İlan başlığı', c.title || '—'], ['Açıklama', c.note || '—'], ['Bölge', c.area || '—'], ['Ücret', c.fee != null ? '₺' + c.fee : '—'], ['Adres sayısı', String(c.packages || 0)]];
+    else rows = [['İşletme adı', c.name || '—'], ['Tabela adı', c.signboard || '—'], ['Kategori', c.category || '—'], ['Çalışma saatleri', c.hours || '—']];
+    box.appendChild(h('p', { class: 'small muted', text: 'Şikâyet anındaki hâli (sunucunun kendi kaydından):' }));
+    box.appendChild(kv(rows));
+    if (logo) box.appendChild(logo);
+    if (x.live) box.appendChild(h('div', { class: 'small' }, h('span', { class: 'pill' + (gone ? ' bad' : ' ok'), text: gone ? (x.place === 'card' ? 'logo yok' : 'yayında değil' + (x.live.by === 'owner' ? ' (sahibi kaldırdı)' : x.live.by === 'admin' ? ' (yönetim kaldırdı)' : '')) : (x.place === 'card' ? 'logo duruyor' : 'yayında') })));
+    return box;
+  }
   const rpv = { status: 'open' };
   function repPerson(label, p) {
     if (!p || !p.id) return h('div', { class: 'small muted', text: label + ': —' });
@@ -336,13 +357,15 @@
   function repCard(x, reload) {
     const ageH = (Date.now() - new Date(x.createdAt).getTime()) / 3600000;
     const box = h('div', { class: 'box rep' + (x.status === 'open' && ageH >= 20 ? ' old' : ''), 'data-report': x.id });
-    box.appendChild(h('h3', { text: x.reasonText + ' · ' + (x.kind === 'message' ? 'mesaj' : 'kullanıcı') + ' · ' + (RPLACE[x.place] || x.place) + (x.group ? ' “' + x.group + '”' : '') }));
+    box.appendChild(h('h3', { text: x.reasonText + ' · ' + (x.kind === 'message' ? 'mesaj' : x.kind === 'content' ? 'içerik' : 'kullanıcı') + ' · ' + (RPLACE[x.place] || x.place) + (x.group ? ' “' + x.group + '”' : '') }));
     box.appendChild(h('div', { class: 'muted small', text: when(x.createdAt) + (x.status === 'open' ? ' · ' + Math.round(ageH) + ' saat önce' : '') + (x.blocked ? ' · şikâyet eden engelledi' : '') }));
     box.appendChild(repPerson('Şikâyet edilen', x.target));
     if (x.targetReporters90d > 1) box.appendChild(h('div', { class: 'small' }, h('span', { class: 'pill warn', text: 'Son 90 günde ' + x.targetReporters90d + ' farklı kişi şikâyet etti' })));
     box.appendChild(repPerson('Şikâyet eden', x.reporter));
     if (x.note) box.appendChild(h('div', { class: 'small', text: 'Not: ' + x.note }));
-    if (x.messages && x.messages.length) {
+    if (x.kind === 'content' || RREMOVE[x.place]) {
+      box.appendChild(repContent(x));
+    } else if (x.messages && x.messages.length) {
       box.appendChild(h('div', { class: 'msgs', 'aria-label': 'Şikâyet edilen mesajlar' }, ...x.messages.map((m) => h('p', null, h('span', { class: 't', text: m.at ? when(new Date(m.at).toISOString()) : '' }), m.text))));
     } else {
       box.appendChild(h('p', { class: 'small muted', text: 'Mesaj eklenmemiş (kullanıcı şikâyeti).' }));
@@ -356,10 +379,11 @@
       box.appendChild(h('div', { class: 'row' },
         h('button', { type: 'button', class: 'btn small ghost', text: 'İşlem yok, kapat', onclick: () => act('none') }),
         confirmBtn('Uyar ve kapat', '', 'Kişiye uyarı duyurusu gitsin mi?', () => act('warn')),
+        RREMOVE[x.place] && !(x.live && x.live.removed) ? confirmBtn(RREMOVE[x.place][0], 'danger', RREMOVE[x.place][1], () => act('remove')) : null,
         confirmBtn('Hesabı kapat', 'danger', 'Hesap kapatılsın ve bu kişinin bütün açık şikâyetleri kapansın mı?', () => act('ban'))));
       box.appendChild(info);
     } else {
-      box.appendChild(h('div', { class: 'small' }, h('span', { class: 'pill' + (x.action === 'ban' ? ' bad' : x.action === 'warn' ? ' warn' : ' ok'), text: RACT[x.action] || x.action }),
+      box.appendChild(h('div', { class: 'small' }, h('span', { class: 'pill' + (x.action === 'ban' || x.action === 'remove' ? ' bad' : x.action === 'warn' ? ' warn' : ' ok'), text: RACT[x.action] || x.action }),
         ' ' + when(x.closedAt) + (x.closedBy ? ' · ' + x.closedBy : '') + (x.adminNote ? ' · ' + x.adminNote : '')));
     }
     return box;
@@ -380,7 +404,7 @@
     }
     sel.addEventListener('change', load);
     c.appendChild(h('h2', { text: 'Şikâyetler' }));
-    c.appendChild(h('p', { class: 'small muted', text: 'Kullanıcıların sohbetten gönderdiği şikâyetler. Mesajlar sunucuda tutulmadığı için burada yalnız şikâyet edenin eklediği mesajlar görünür. “İşlem yok” ya da “Uyar” deyince şikâyet edene “incelendi” duyurusu gider (kim olduğu ve ne yapıldığı söylenmez). “Hesabı kapat” hesabı men eder ve o kişinin bütün açık şikâyetlerini kapatır. Kapatılan şikâyetler 180 gün sonra silinir.' }));
+    c.appendChild(h('p', { class: 'small muted', text: 'Kullanıcıların sohbetten, harita tabelasından, iş ilanından ve işletme kartından gönderdiği şikâyetler. Mesajlar sunucuda tutulmadığı için sohbet şikâyetinde yalnız şikâyet edenin eklediği mesajlar görünür; tabela, ilan ve kartın şikâyet anındaki hâli sunucunun kendi kaydındandır. “İşlem yok” ya da “Uyar” deyince şikâyet edene “incelendi” duyurusu gider (kim olduğu ve ne yapıldığı söylenmez). “Tabelayı / İlanı / Logoyu kaldır” içeriği indirir ve aynı içerik hakkındaki bütün açık şikâyetleri kapatır. “Hesabı kapat” hesabı men eder ve o kişinin bütün açık şikâyetlerini kapatır. Kapatılan şikâyetler 180 gün sonra silinir.' }));
     c.appendChild(h('div', { class: 'row' }, sel, h('button', { type: 'button', class: 'btn ghost', text: 'Yenile', onclick: load })));
     c.appendChild(list);
     load();
