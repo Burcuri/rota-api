@@ -1,3 +1,36 @@
+# Sunucu güncellemesi — Dilim 39 · İÇERİK ŞİKÂYETİ (harita tabelası, iş ilanı, işletme kartı) + Dilim 38'in eksik dosyaları (9 Kasım 2026) — sunucu 1.29.0
+
+**Render'daki "Deploy failed" (`app/main.py`, 50. satır `from .reports import …`) bununla düzelir.** GitHub'a Dilim 38'in bazı dosyaları
+(en az `app/reports.py`) gitmemiş; `main.py` onları arıyor. Aşağıdaki liste **Dilim 37'den bu yana değişen BÜTÜN dosyaları** içerir
+(Dilim 38 + 39) — hepsini yükle; aynı adlı dosyanın üzerine yazılır, zararı yok. Yeni paket YOK, yeni ortam değişkeni YOK, Render'da
+değişiklik YOK. `reports` tablosu ve `reports.ref` sütunu sunucu açılırken kendiliğinden kurulur. Ayrıntı: uygulama paketindeki `docs/DILIM-39.md`.
+- **`app/reports.py`**: İÇERİK ŞİKÂYETİ (kullanıcı isteği 9 Kasım: "Diğer yerlere de Şikâyet et … tabelalara şikâyet edebilmek için tıklamak
+  ve gelen bir pop up olsun"): harita tabelası, iş ilanı, işletme kartı. İçeriğin şikâyet anındaki hâli sunucunun kendi kaydından alınır.
+  Yönetim › Şikâyetler'de yeni karar: **Tabelayı kaldır** (aynı paketin bütün noktaları; coin iade edilmez) / **İlanı kaldır** (bağlı görev
+  ve canlı takip de biter) / **Logoyu kaldır** (işletme kartı) — sahibine duyuru gider, aynı içerik hakkındaki bütün açık şikâyetler kapanır.
+- **`app/account.py`** (`/v1/ads/active`), **`app/main.py`** (`/v1/jobs/open`; sürüm 1.29.0), **`app/bizcard.py`**: engellediğin (ya da seni
+  engelleyen) işletmenin / sponsorun tabelaları, ilanları ve kartı sana gösterilmez; şikâyet ettiğin tabela ve ilan da.
+- **`app/models.py`**, **`app/migrate.py`** (`reports.ref`), **`app/static/yonetim.js`** (içerik kartı: yazı, logo, yayında mı; kaldır
+  düğmesi), **`app/webapp/`** (web ikizi 0.35.0: tabela penceresi, İngilizce Yardım).
+- **Dilim 38'den (GitHub'da eksik):** `app/blocks.py` (YENİ), `app/reports.py` (YENİ), `app/admin.py`, `app/backup.py`, `app/backup_core.py`,
+  `app/events.py`, `app/follow.py`, `app/iap.py`, `app/nearby.py`, `app/relay.py`, `app/tasks.py`, `app/static/yonetim.css`.
+
+**Yapılacak (GitHub `Burcuri/rota-api`):**
+1. `app` klasörüne gir → `webapp` klasörünü sil (⋯ → *Delete directory*) → Commit.
+2. Yine `app` klasöründeyken **Add file → Upload files** → zip'teki `app/webapp` ve `app/static` klasörlerini ve şu 16 dosyayı birlikte
+   sürükle: `account.py`, `admin.py`, `backup.py`, `backup_core.py`, `bizcard.py`, `blocks.py`, `events.py`, `follow.py`, `iap.py`, `main.py`,
+   `migrate.py`, `models.py`, `nearby.py`, `relay.py`, `reports.py`, `tasks.py` → Commit. (70 dosya, sınır 100.)
+3. `tests` klasörüne gir → **Upload files** → zip'teki `tests/test_backup.py`, `tests/test_content_reports.py`, `tests/test_iap_refunds.py`,
+   `tests/test_reports.py` → Commit.
+4. Ana klasöre dön → **Upload files** → zip'teki `GUNCELLEME_ADIMLARI.md` → Commit.
+5. (İsteğe bağlı; gece yedeğindeki sarı "Node.js 20" uyarısı için) Kalemle düzeltmek yerine dosyayı yükle: GitHub'da `.github` → `workflows`
+   klasörüne gir → **Add file → Upload files** → zip'teki `.github/workflows/yedek.yml` → Commit. (Atlarsan da yedek çalışır.)
+6. Render › **Manual Deploy → Deploy latest commit** → **Live**. Deneme: `https://rota-sunucu.onrender.com/openapi.json` → en başta
+   `"version":"1.29.0"`; yönetim panelinde **Şikâyetler** sekmesi. Yine "Deploy failed" olursa: Render › **Logs** → kırmızı satırların
+   sonuncusunda geçen `app/….py` dosyasını yeniden yükle.
+
+---
+
 # Sunucu güncellemesi — Dilim 38 · sohbette ŞİKÂYET + ENGEL (mağaza şartı), mağaza İADESİ, yedek işi Node 24 (9 Kasım 2026) — sunucu 1.28.0
 
 **Dilim 37'yi yüklediysen aşağıdakiler yeter.** Yeni `reports` tablosu ve `store_purchases.refunded_at` sütunu sunucu açılırken kendiliğinden
