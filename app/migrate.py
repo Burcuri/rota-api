@@ -65,6 +65,8 @@ ADD_COLUMNS = [
     ("ad_bookings", "reminded_at", "TIMESTAMP WITH TIME ZONE"),
     # 1.28.0: mağaza iadesi (Google Play iptal edilen satın almalar / App Store REFUND bildirimi) → coin düşülür
     ("store_purchases", "refunded_at", "TIMESTAMP WITH TIME ZONE"),
+    # 1.29.0: içerik şikâyeti (tabela / ilan / işletme kartı) — şikâyet edilen içeriğin kimliği
+    ("reports", "ref", "VARCHAR(40) DEFAULT ''"),
 ]
 
 # create_all'un yeni kurulumda açtığı dizin adlarıyla aynı adlar (ix_<tablo>_<sütun>)
@@ -74,6 +76,7 @@ INDEXES = [
     "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_public_no ON users (public_no)",
     "CREATE INDEX IF NOT EXISTS ix_handoffs_employer_id ON handoffs (employer_id)",  # 1.18.0
     "CREATE INDEX IF NOT EXISTS ix_users_phone_hash ON users (phone_hash)",  # 1.20.0
+    "CREATE INDEX IF NOT EXISTS ix_reports_ref ON reports (ref)",  # 1.29.0
 ]
 
 

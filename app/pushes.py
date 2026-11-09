@@ -64,7 +64,7 @@ KINDS: dict[str, tuple[str, str, int]] = {
     "reward_won": ("notice", "🎁 Bir kurye ödül ürününüzü hak etti — gelince barkodunu okutun", 30),
     "reward_given": ("notice", "🎁 Barkodun okutuldu — ürünü aldıysan “Teslim aldım” de", 30),
     # 1.26.0: reklam / tabela bitişine 1 gün kala (reklam adı yazmaz; dokununca Reklamlarım)
-    "ad_ending": ("notice", "📍 Reklamın yarın bitiyor — Reklamlarım'dan tek dokunuşla uzatabilirsin", 30),
+    "ad_ending": ("notice", "🪧 Tabelan yarın bitiyor — Reklamlarım'dan tek dokunuşla uzatabilirsin", 30),  # 1.27.0: tek ürün tabela
     "test": ("test", "🔔 Bildirimler açık. Bu bir deneme bildirimidir.", 0),
 }
 TITLE = "Rota"

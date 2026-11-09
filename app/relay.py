@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from . import events
+from . import blocks, events
 from .auth import current_user
 from .pushes import drop_device, queue as push_queue
 from .db import SessionLocal, get_db
@@ -163,8 +163,10 @@ def make_router(ttl_days: float, max_bytes: int, user_max_bytes: int, group_max:
             if sponsors:
                 raise HTTPException(403, "Sponsor hesaplarına mesaj gönderilmez")
             raise HTTPException(404, "Alıcı bulunamadı")
+        # 1.28.0 ENGEL (iki yönde): engelli alıcıya mesaj İLETİLMEZ; gönderene söylenmez (yanıtta alıcı gibi görünür) — blocks.py
+        deliver = found - blocks.cut_for(db, user.id, found)
         # Alıcının bekleyen mesajlarının toplam boyutu sınırı (kötüye kullanım ve dolmuş kutu)
-        for uid_ in found:
+        for uid_ in deliver:
             pending = (
                 db.query(func.coalesce(func.sum(RelayMsg.size), 0))
                 .join(RelayDelivery, RelayDelivery.msg_id == RelayMsg.id)
@@ -178,7 +180,7 @@ def make_router(ttl_days: float, max_bytes: int, user_max_bytes: int, group_max:
         db.add(msg)
         db.flush()
         targets = 0
-        for uid_ in found:
+        for uid_ in deliver:
             devs = db.query(Device.id).filter(Device.user_id == uid_).all()
             if devs:
                 for (dev,) in devs:
@@ -192,8 +194,8 @@ def make_router(ttl_days: float, max_bytes: int, user_max_bytes: int, group_max:
             device_of(db, user, b.device_id)
         for (dev,) in db.query(Device.id).filter(Device.user_id == user.id, Device.id != (b.device_id or "")).all():
             db.add(RelayDelivery(msg_id=msg.id, user_id=user.id, device_id=dev))
-        events.log(db, "relay.send", user.id, n=len(found))  # yalnız kaç kişiye gittiği; içerik ve alıcılar yazılmaz
-        for uid_ in ([] if b.silent else found):  # 1.19.0: telefona bildirim ("📩 Yeni mesajınız var"; içerik ve ad yok). Aynı kişiden 60 sn'de bir.
+        events.log(db, "relay.send", user.id, n=len(deliver))  # yalnız kaç kişiye gittiği; içerik ve alıcılar yazılmaz
+        for uid_ in ([] if b.silent else deliver):  # 1.19.0: telefona bildirim ("📩 Yeni mesajınız var"; içerik ve ad yok). Aynı kişiden 60 sn'de bir.
             push_queue(db, uid_, "msg", thread=user.id)
         db.commit()
         return {"id": msg.id, "at": now.isoformat(), "recipients": sorted(found), "missing": [t for t in to if t not in found]}
@@ -224,8 +226,14 @@ def make_router(ttl_days: float, max_bytes: int, user_max_bytes: int, group_max:
             .all()
         )
         out = []
+        # 1.28.0: engellediğim kişinin engelden ÖNCE yolladığı ve bekleyen mesajları da gelmez (bu cihazın kaydı silinir)
+        mine_blocked = blocks.i_blocked(db, user.id)
+        drop = []
         for m, s in rows:
             if _utc(m.expires_at) < now:
+                continue
+            if s.id != user.id and s.id in mine_blocked:
+                drop.append(m.id)
                 continue
             out.append({
                 "id": m.id,
@@ -236,6 +244,9 @@ def make_router(ttl_days: float, max_bytes: int, user_max_bytes: int, group_max:
                 "body": m.body,
                 "at": _utc(m.created_at).isoformat(),
             })
+        if drop:
+            db.query(RelayDelivery).filter(RelayDelivery.user_id == user.id, RelayDelivery.device_id == dev.id, RelayDelivery.msg_id.in_(drop)).delete(synchronize_session=False)
+            db.commit()
         return out
 
     @r.post("/v1/relay/ack")

@@ -165,7 +165,7 @@ def _housekeeping_loop():
             print("[temizlik] hata:", type(e).__name__, flush=True)
 
 
-app = FastAPI(title="Rota Asistan", version="1.28.0", lifespan=lifespan)
+app = FastAPI(title="Rota Asistan", version="1.29.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -1044,6 +1044,12 @@ def open_jobs(user: User = Depends(current_user), db: Session = Depends(get_db))
         .limit(80)
         .all()
     )
+    # 1.29.0: engelli (iki yönde) işletmelerin ilanları ve bu kişinin şikâyet ettiği ilanlar ona gösterilmez
+    from .blocks import blocked_with  # döngüsel içe aktarma olmasın
+    from .reports import reported_refs
+    bl, rp = blocked_with(db, user.id), reported_refs(db, user.id, "job")
+    if bl or rp:
+        rows = [j for j in rows if j.employer_id not in bl and j.id not in rp]
     cache: dict = {}
     return [job_out(j, db, viewer=user, share_cache=cache) for j in rows]
 

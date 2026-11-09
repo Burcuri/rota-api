@@ -73,6 +73,9 @@ def make_router(current_user) -> APIRouter:
         u = db.get(User, uid)
         if not u or u.deleted_at is not None or u.banned:
             raise HTTPException(404, "İşletme bulunamadı")
+        from .blocks import pair_blocked  # 1.29.0: engelli (iki yönde) işletmenin kartı açılmaz
+        if user.id != uid and pair_blocked(db, user.id, uid):
+            raise HTTPException(404, "İşletme bulunamadı")
         if u.active_role != "employer":
             raise HTTPException(404, "Bu hesap bir işletme değil")
         return business_card(db, u)

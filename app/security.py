@@ -71,6 +71,7 @@ def reset_limits(db: Session | None = None) -> None:
         w.reset()
     with _sms_lock:
         _sms_day.update(day="", n=0)
+    notify.reset_budget()
     if db is not None:
         db.query(AuthThrottle).delete(synchronize_session=False)
         db.commit()
@@ -231,6 +232,11 @@ def unlock_user(db: Session, u: User) -> int:
 # ------------------------------------------------------------------------------------------------ doğrulama kodları
 def _code_hash(purpose: str, user_id: str, code: str) -> str:
     return _h(f"code:{purpose}:{user_id}:{code}")
+
+
+def admin_caps() -> dict:
+    """Yönetim için: hangi gönderim yolu bağlı (anahtarlar değil, yalnız ad / açık-kapalı)."""
+    return {"email": notify.email_enabled(), "sms": notify.sms_enabled(), "smsProvider": notify.sms_provider(), "smsLinks": notify.sms_links_enabled()}
 
 
 def _sms_budget() -> bool:
@@ -747,7 +753,7 @@ def make_router(user_out) -> APIRouter:
             q = q.filter(AuthCode.user_id == user_id)
         rows = q.order_by(AuthCode.created_at.desc()).limit(200).all()
         nm = names(db, {c.user_id for c in rows})
-        return {"items": [code_row(c, nm) for c in rows], "caps": {"email": notify.email_enabled(), "sms": notify.sms_enabled()}}
+        return {"items": [code_row(c, nm) for c in rows], "caps": admin_caps()}
 
     @r.post("/v1/admin/codes/{cid}/reveal")
     def admin_reveal(cid: str, request: Request, a=Depends(current_admin), db: Session = Depends(get_db)):
@@ -775,7 +781,7 @@ def make_router(user_out) -> APIRouter:
             "deletedAt": _utc(u.deleted_at).isoformat() if u.deleted_at else None,
             "lock": {"locked": until is not None, "until": until.isoformat() if until else None, "fails": fails},
             "codes": [code_row(c, nm) for c in rows],
-            "caps": {"email": notify.email_enabled(), "sms": notify.sms_enabled()},
+            "caps": admin_caps(),
         }
 
     @r.post("/v1/admin/users/{uid_}/unlock")

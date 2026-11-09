@@ -638,6 +638,12 @@ def make_router(user_out: Callable[[User], dict], test_buy: bool = True) -> APIR
             .limit(300)
             .all()
         )
+        # 1.29.0: engelli (iki yönde) sahiplerin tabelaları ve bu kişinin şikâyet ettiği tabelalar ona gösterilmez
+        from .blocks import blocked_with  # döngüsel içe aktarma olmasın
+        from .reports import reported_refs
+        bl, rp = blocked_with(db, user.id), reported_refs(db, user.id, "ad")
+        if bl or rp:
+            rows = [a for a in rows if a.owner_id not in bl and a.id not in rp]
         names = display_names(db, {a.owner_id for a in rows})
         owners = {u.id: u for u in db.query(User).filter(User.id.in_({a.owner_id for a in rows})).all()} if rows else {}
         # 1.26.0: reklam pininde logo (sürüm; resim /v1/logo/{id}) ve tabela

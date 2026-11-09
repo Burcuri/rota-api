@@ -40,7 +40,7 @@ class User(Base):
     last_login_at = Column(DateTime(timezone=True))
     # Dilim 10: rehberden / numaradan bulunabilirim. NULL = açık sayılır (varsayılan açık; Gizlilik'ten kapatılır)
     findable = Column(Boolean, default=True)
-    # Dilim 11: haritada görünecek ikonun KIMLIĞI (çizim uygulamada; örn. "kedi"). Boş = seçilmedi
+    # Dilim 11: haritada görünecek ikonun KİMLİĞİ (çizim uygulamada; örn. "kedi"). Boş = seçilmedi
     map_icon = Column(String(24))
     # Dilim 12: haritada ROTA kullanıcılarına görünme (AYRI açık rıza; varsayılan KAPALI). Konum yalnız görünürken, yaklaşık, kısa süreli tutulur.
     visible_map = Column(Boolean, default=False)
@@ -881,14 +881,15 @@ class Report(Base):
     id = Column(String(32), primary_key=True, default=uid)
     reporter_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
     target_id = Column(String(32), ForeignKey("users.id"), nullable=False, index=True)
-    kind = Column(String(12), nullable=False, default="user")  # message | user
+    kind = Column(String(12), nullable=False, default="user")  # message | user | content (1.29.0)
     reason = Column(String(16), nullable=False, default="other")  # spam | abuse | threat | fraud | sexual | other
     note = Column(String(300), nullable=False, default="")
-    place = Column(String(12), nullable=False, default="dm")  # dm | group | map | other
+    place = Column(String(12), nullable=False, default="dm")  # dm | group | map | other · 1.29.0: ad | job | card (içerik)
+    ref = Column(String(40), nullable=False, default="", index=True)  # 1.29.0: tabela / ilan kimliği (kartta işletmenin kimliği)
     context = Column(Text, nullable=False, default="")
     blocked = Column(Boolean, nullable=False, default=False)  # şikâyet eden aynı anda engelledi mi
     status = Column(String(8), nullable=False, default="open", index=True)  # open | closed
-    action = Column(String(8), nullable=False, default="")  # none | warn | ban
+    action = Column(String(8), nullable=False, default="")  # none | warn | ban | remove (1.29.0: içerik kaldırıldı)
     admin_note = Column(String(300), nullable=False, default="")
     closed_by = Column(String(32), nullable=False, default="")
     created_at = Column(DateTime(timezone=True), default=now, index=True)

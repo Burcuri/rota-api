@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 
 from . import events
 from .auth import current_user
+from .blocks import pair_blocked
 from .pushes import queue as push_queue
 from .db import SessionLocal, get_db
 from .limits import Window
@@ -215,6 +216,8 @@ def make_router(keep_hours: float = 48, max_hours: float = 24) -> APIRouter:
             raise HTTPException(404, "Kurye bulunamadı")
         if c.active_role != "courier":
             raise HTTPException(400, "Bu kişi şu an kurye modunda değil")
+        if pair_blocked(db, user.id, c.id):  # 1.28.0: engel varsa adres listesi paylaşılamaz
+            raise HTTPException(403, "Bu kişiyle şu an işlem yapılamıyor")
         job = None
         if b.job_id:
             job = db.get(Job, b.job_id)
