@@ -67,6 +67,8 @@ ADD_COLUMNS = [
     ("store_purchases", "refunded_at", "TIMESTAMP WITH TIME ZONE"),
     # 1.29.0: içerik şikâyeti (tabela / ilan / işletme kartı) — şikâyet edilen içeriğin kimliği
     ("reports", "ref", "VARCHAR(40) DEFAULT ''"),
+    # 1.30.0: bildirimin dili (uygulamanın dili English ise İngilizce bildirim)
+    ("user_push", "lang", "VARCHAR(5) DEFAULT 'tr'"),
 ]
 
 # create_all'un yeni kurulumda açtığı dizin adlarıyla aynı adlar (ix_<tablo>_<sütun>)

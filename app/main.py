@@ -10,6 +10,8 @@ from html import escape as html_escape
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exception_handlers import http_exception_handler
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -32,6 +34,7 @@ from .auth import (
     user_token,
 )
 from .db import Base, engine, get_db
+from .i18n import LangMiddleware, en as en_text, lang_of
 from .limits import Window
 from .geo import sort_packages
 from .doors import make_router as make_doors_router
@@ -165,7 +168,7 @@ def _housekeeping_loop():
             print("[temizlik] hata:", type(e).__name__, flush=True)
 
 
-app = FastAPI(title="Rota Asistan", version="1.29.0", lifespan=lifespan)
+app = FastAPI(title="Rota Asistan", version="1.30.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -173,20 +176,35 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# 1.30.0: isteğin dili (X-Lang: en → hata / duyuru / bildirim / e-posta İngilizce; app/i18n.py)
+app.add_middleware(LangMiddleware)
 
 PUBLIC_BASE = os.getenv("PUBLIC_BASE", "").rstrip("/")
 
 
+def _tx(request: Request, text):
+    """1.30.0: uygulamanın dili English ise hata metni İngilizce (app/i18n.py)"""
+    return en_text(text) if isinstance(text, str) and lang_of(request) == "en" else text
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _http_handler(request: Request, exc: StarletteHTTPException):
+    """Bütün HTTPException'lar: metin isteğin dilinde; biçim FastAPI'nin varsayılanıyla aynı ({"detail": …} + başlıklar)."""
+    if isinstance(exc.detail, str) and lang_of(request) == "en":
+        exc = StarletteHTTPException(exc.status_code, en_text(exc.detail), getattr(exc, "headers", None))
+    return await http_exception_handler(request, exc)
+
+
 @app.exception_handler(AccountBlocked)
-async def _blocked_handler(_request: Request, exc: AccountBlocked):
+async def _blocked_handler(request: Request, exc: AccountBlocked):
     """Askıya alınmış hesap: uygulama `code: banned` görünce oturumu kapatır ve nedeni gösterir."""
-    return JSONResponse(status_code=403, content={"detail": exc.detail, "code": exc.code, "reason": exc.reason})
+    return JSONResponse(status_code=403, content={"detail": _tx(request, exc.detail), "code": exc.code, "reason": _tx(request, exc.reason)})
 
 
 @app.exception_handler(sec.LoginLocked)
-async def _locked_handler(_request: Request, exc: sec.LoginLocked):
+async def _locked_handler(request: Request, exc: sec.LoginLocked):
     """1.20.0: çok fazla yanlış şifre — uygulama `code: locked` görünce "Şifremi unuttum"u öne çıkarır."""
-    return JSONResponse(status_code=429, content={"detail": exc.detail, "code": exc.code, "retryAfter": exc.retry_after}, headers={"Retry-After": str(exc.retry_after)})
+    return JSONResponse(status_code=429, content={"detail": _tx(request, exc.detail), "code": exc.code, "retryAfter": exc.retry_after}, headers={"Retry-After": str(exc.retry_after)})
 
 
 @app.exception_handler(RequestValidationError)
@@ -198,8 +216,8 @@ async def _validation_handler(_request: Request, exc: RequestValidationError):
 
 
 @app.exception_handler(PasswordChangeRequired)
-async def _must_change_handler(_request: Request, exc: PasswordChangeRequired):
-    return JSONResponse(status_code=403, content={"detail": exc.detail, "code": exc.code})
+async def _must_change_handler(request: Request, exc: PasswordChangeRequired):
+    return JSONResponse(status_code=403, content={"detail": _tx(request, exc.detail), "code": exc.code})
 
 
 def drop_stored_addresses() -> int:

@@ -186,6 +186,11 @@ class EndIn(BaseModel):
     reason: str = Field(default="cancel", pattern=r"^(cancel|done)$")
 
 
+
+def _to_courier(name: str) -> str:
+    """"Ali kuryesine" ya da "başka bir kuryeye" (1.30.0: İngilizcesi i18n.py'de ayrı kalıp)"""
+    return f"{name} kuryesine" if name else "başka bir kuryeye"
+
 def make_router(keep_hours: float = 48, max_hours: float = 24) -> APIRouter:
     global TASK_MAX_HOURS
     TASK_MAX_HOURS = max_hours
@@ -234,7 +239,7 @@ def make_router(keep_hours: float = 48, max_hours: float = 24) -> APIRouter:
             other = people_of(db, [same]).get(same.courier_id, {})
             raise HTTPException(
                 409,
-                f"Bu ilan zaten {tr_title(other.get('name') or '') or 'başka bir'} kuryesine bağlı (GRV-{same.task_no}). Bir ilan aynı anda tek kuryeye verilir.",
+                f"Bu ilan zaten {_to_courier(tr_title(other.get('name') or ''))} bağlı (GRV-{same.task_no}). Bir ilan aynı anda tek kuryeye verilir.",
             )
         busy = live(db, db.query(Task).filter(Task.employer_id == user.id, Task.courier_id == c.id, Task.status.in_(OPEN)).first())
         if busy is not None:

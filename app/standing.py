@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
+from .i18n import loc_all
 from .models import RewardClaim, UserMark, now
 
 WINDOW_DAYS = 90
@@ -148,6 +149,7 @@ def public_standing(st: dict) -> dict:
     out = dict(st)
     if st["blacklisted"]:
         out["reasons"] = ["Yönetim ödül koymanı durdurdu"]
+    out["reasons"] = loc_all(out.get("reasons") or [])  # 1.30.0: uygulamanın dilinde
     return out
 
 

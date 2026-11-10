@@ -22,6 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from . import events
+from .i18n import loc
 from .admin import audit, current_admin
 from .auth import current_user
 from .db import get_db
@@ -102,7 +103,7 @@ def survey_out(s: Survey, st: dict, mine: float | None = None, area: tuple[str, 
     if district:
         local = {"province": province, "district": district, "n": st["localN"], "avg": shown(st["localN"], st["localAvg"])}
     return {
-        "id": s.id, "q": s.q, "kind": s.kind, "unit": s.unit, "min": s.min_v, "max": s.max_v, "status": s.status,
+        "id": s.id, "q": loc(s.q), "kind": s.kind, "unit": loc(s.unit), "min": s.min_v, "max": s.max_v, "status": s.status,
         "n": st["n"], "avg": shown(st["n"], st["avg"]), "local": local,
         "mine": (int(mine) if mine is not None and float(mine).is_integer() else mine), "at": ms(s.created_at),
     }
@@ -188,7 +189,7 @@ def make_router() -> APIRouter:
                .order_by(func.count(SurveyAnswer.id).desc()).limit(12).all())
         last = db.query(func.max(SurveyAnswer.updated_at)).filter(SurveyAnswer.survey_id == s.id).scalar()
         return {
-            "id": s.id, "q": s.q, "kind": s.kind, "unit": s.unit, "min": s.min_v, "max": s.max_v, "status": s.status,
+            "id": s.id, "q": loc(s.q), "kind": s.kind, "unit": loc(s.unit), "min": s.min_v, "max": s.max_v, "status": s.status,
             "by": s.created_by, "at": ms(s.created_at), "archivedAt": ms(s.archived_at), "lastAnswerAt": ms(last),
             "n": st["n"], "avg": round(st["avg"]) if st["avg"] is not None else None,
             "areas": [{"province": p or "", "district": d or "", "n": int(n), "avg": round(float(a)) if a is not None else None} for p, d, n, a in top],

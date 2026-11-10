@@ -33,6 +33,7 @@ from . import events, notify
 from .admin import audit, current_admin, mask_email, mask_phone
 from .auth import SECRET, AccountBlocked, DUMMY_HASH, check_pw, current_user, hash_pw, is_phone_like, norm_phone, user_token
 from .db import get_db
+from .i18n import loc
 from .limits import Window, client_ip
 from .models import (
     AccountDoc, AccountState, AdBooking, AdSeen, AdStat, AuthCode, AuthThrottle, CoinEntry, CourierProfile, DeliveryProof, Device, DoorReport, Follow,
@@ -282,12 +283,12 @@ def issue_code(db: Session, user: User, purpose: str, channel: str, target: str,
     if channel == "email":
         provider = notify.email_enabled()
         subj, body = CODE_TEXT.get(purpose, CODE_TEXT["email"])
-        ok = bool(provider and notify.send_email(target, subj, body.format(code=code, min=ttl)))
+        ok = bool(provider and notify.send_email(target, loc(subj), loc(body.format(code=code, min=ttl))))
     else:
         provider = notify.sms_enabled()
         ok = False
         if provider and sms_phone.allow(target) and _sms_budget():
-            ok = bool(notify.send_sms(target, SMS_TEXT.format(code=code, min=ttl)))
+            ok = bool(notify.send_sms(target, loc(SMS_TEXT.format(code=code, min=ttl))))
     row = AuthCode(
         id=uid(), user_id=user.id, purpose=purpose, channel=channel, target=target, code_hash=_code_hash(purpose, user.id, code),
         code_plain=None if ok else code, delivered=ok, provider=bool(provider), ip=(client_ip(request) if request else "")[:64],
@@ -546,6 +547,7 @@ def _mail_after(to: str, subject: str, text: str) -> None:
     """Bilgi e-postası (şifre değişti / hesap silindi): servis bağlıysa arka planda; yoksa hiç."""
     if not to or not notify.email_enabled():
         return
+    subject, text = loc(subject), loc(text)  # 1.30.0: isteğin dilinde (iş parçacığı dili bilmez)
     threading.Thread(target=lambda: notify.send_email(to, subject, text), name="mail", daemon=True).start()
 
 

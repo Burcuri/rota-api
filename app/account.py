@@ -30,6 +30,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from . import events
+from .i18n import loc
 from .admin import audit, current_admin
 from .auth import current_user
 from .db import SessionLocal, get_db
@@ -213,7 +214,7 @@ def coins_out(db: Session, user_id: str, limit: int = 100) -> dict:
     rows = db.query(CoinEntry).filter(CoinEntry.user_id == user_id).order_by(CoinEntry.created_at.desc()).limit(limit).all()
     return {
         "balance": coin_balance(db, user_id),
-        "history": [{"id": e.id, "delta": e.delta, "label": e.label, "at": ms(e.created_at), "kind": e.kind} for e in rows],
+        "history": [{"id": e.id, "delta": e.delta, "label": loc(e.label), "at": ms(e.created_at), "kind": e.kind} for e in rows],
     }
 
 

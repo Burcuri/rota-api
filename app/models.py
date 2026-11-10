@@ -829,6 +829,8 @@ class UserPush(Base):
     auth = Column(String(48), nullable=False, default="")
     platform = Column(String(16), nullable=False, default="")
     device_id = Column(String(64), nullable=False, default="", index=True)
+    # 1.30.0: bildirim bu dilde yazılır (uygulama kayıtta `X-Lang` gönderir; tr | en)
+    lang = Column(String(5), nullable=False, default="tr")
     created_at = Column(DateTime(timezone=True), default=now)
     seen_at = Column(DateTime(timezone=True), default=now)
 

@@ -36,6 +36,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from . import events
+from .i18n import loc
 from .admin import audit, current_admin
 from .auth import current_user, norm_phone
 from .db import SessionLocal, get_db
@@ -164,6 +165,11 @@ def expiring_soon(db: Session, user_id: str, days: float, window_days: float = 3
 
 def today_points(db: Session, courier_id: str, day: str) -> int:
     return int(db.query(func.coalesce(func.sum(DeliveryProof.points), 0)).filter(DeliveryProof.courier_id == courier_id, DeliveryProof.day == day).scalar() or 0)
+
+
+def who_courier(code: str) -> str:
+    """"K-1234 kuryesi" ya da "Bir kurye" (1.30.0: İngilizcesi i18n.py'de ayrı kalıp — "Courier K-1234" / "A courier")"""
+    return f"{code} kuryesi" if code else "Bir kurye"
 
 
 def notify(db: Session, user_id: str, kind: str, text: str, ref: str = "") -> None:
@@ -451,7 +457,7 @@ def make_router(daily_max: int = 600, point_tl: float = 0.10, value_min_ratio: f
         rows = db.query(PointEntry).filter(PointEntry.user_id == user.id).order_by(PointEntry.created_at.desc()).limit(50).all()
         return {
             **summary(db, user, expire_days),
-            "history": [{"id": e.id, "delta": e.delta, "kind": e.kind, "note": e.note, "at": ms(e.created_at)} for e in rows],
+            "history": [{"id": e.id, "delta": e.delta, "kind": e.kind, "note": loc(e.note), "at": ms(e.created_at)} for e in rows],
             "rules": rules,
             "rewardsBlocked": is_blacklisted(db, user.id),  # 1.16.0: kara listedeki kurye ödül alamaz
         }
@@ -596,7 +602,7 @@ def make_router(daily_max: int = 600, point_tl: float = 0.10, value_min_ratio: f
         rw.qty_left -= 1
         notify(
             db, rw.owner_id, "reward.claimed",
-            f"{user_code(user) or 'Bir kurye'} kuryesi “{rw.name}” ürününüzü almaya hak kazandı; barkodu {c.code}. "
+            f"{who_courier(user_code(user))} “{rw.name}” ürününüzü almaya hak kazandı; barkodu {c.code}. "
             f"Kurye gelince Ürünlerim › 📷 Barkod okut ile okutun (barkod {int(barcode_days)} gün geçerli).",
             ref=c.id,
         )
@@ -753,7 +759,7 @@ def make_router(daily_max: int = 600, point_tl: float = 0.10, value_min_ratio: f
     @r.get("/v1/notices")
     def notices(user: User = Depends(current_user), db: Session = Depends(get_db)):
         rows = db.query(Notice).filter(Notice.user_id == user.id).order_by(Notice.created_at.desc()).limit(50).all()
-        return {"items": [{"id": n.id, "kind": n.kind, "text": n.text, "ref": n.ref, "at": ms(n.created_at)} for n in rows]}
+        return {"items": [{"id": n.id, "kind": n.kind, "text": loc(n.text), "ref": n.ref, "at": ms(n.created_at)} for n in rows]}
 
     @r.post("/v1/notices/ack")
     def notices_ack(b: AckIn, user: User = Depends(current_user), db: Session = Depends(get_db)):

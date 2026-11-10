@@ -32,6 +32,7 @@ from sqlalchemy import event
 from sqlalchemy.orm import Session, object_session
 
 from . import events, webpush
+from .i18n import REQ_LANG, en
 from .auth import current_user
 from .db import SessionLocal, get_db
 from .limits import Window
@@ -271,12 +272,13 @@ def _send_batch(items: list[tuple[str, str, str]]) -> None:
                 continue
             data = {"t": GROUP_OF.get(kind, kind), "k": kind}
             for row in rows:
+                body = en(text) if (getattr(row, "lang", "") or "tr") == "en" else text  # 1.30.0: cihazın dilinde
                 if row.kind == "expo":
-                    expo_msgs.append({"to": row.token, "title": TITLE, "body": text, "data": data, "sound": "default", "priority": "high",
+                    expo_msgs.append({"to": row.token, "title": TITLE, "body": body, "data": data, "sound": "default", "priority": "high",
                                       "channelId": "default", "ttl": 6 * 3600})
                     expo_rows.append(row)
                 elif row.kind == "web":
-                    payload = {"title": TITLE, "body": text, "url": "/web/?push=" + data["t"], "tag": "rota-" + data["t"], "t": data["t"]}
+                    payload = {"title": TITLE, "body": body, "url": "/web/?push=" + data["t"], "tag": "rota-" + data["t"], "t": data["t"]}
                     if kind in SUB_ROUTED:  # 1.26.0: dokununca kendi ekranı açılsın ("Reklamın yarın bitiyor" → Reklamlarım)
                         payload["url"] += "&k=" + kind
                         payload["k"] = kind
@@ -477,6 +479,7 @@ def make_router() -> APIRouter:
         row.kind, row.p256dh, row.auth = b.kind, p256dh, auth
         row.platform = (b.platform or ("web" if b.kind == "web" else ""))[:16]
         row.device_id = dev or row.device_id or ""
+        row.lang = REQ_LANG.get()  # 1.30.0: uygulamanın dili (X-Lang); dil değişince uygulama yeniden kaydeder
         row.seen_at = now()
         db.flush()
         # Aynı cihazın eski jetonu (jeton yenilendi) ve en eski fazlalıklar silinir
