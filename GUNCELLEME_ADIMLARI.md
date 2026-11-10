@@ -1,3 +1,40 @@
+# Sunucu güncellemesi — Dilim 40 · TAM İNGİLİZCE (hata, duyuru, bildirim, e-posta, geçmiş) (10 Kasım 2026) — sunucu 1.30.0
+
+**Dilim 39'u yükleyip yüklemediğin fark etmez:** aşağıdaki liste **Dilim 37'den bu yana değişen BÜTÜN dosyaları** içerir (Dilim 38 + 39 + 40);
+hepsini yükle, aynı adlı dosyanın üzerine yazılır. Yeni paket YOK, yeni ortam değişkeni YOK, Render'da değişiklik YOK. Yeni sütun
+`user_push.lang` (bildirimin dili) sunucu açılırken kendiliğinden eklenir. Ayrıntı: uygulama paketindeki `docs/DILIM-40.md`.
+- **`app/i18n.py` (YENİ)**, **`app/i18n_en.py` (YENİ)**: TAM İNGİLİZCE (kullanıcı isteği 10 Kasım: "bütün tercüme İngilizce Türkçe karşılığın
+  tam yapıldığından emin ol"). Sunucu metinleri Türkçe yazar ve Türkçe saklar; uygulamanın dili English ise (uygulama her istekte `X-Lang`
+  gönderir) çıkışta İngilizceye çevrilir: **hata mesajları** (~330), **duyurular** (eskiler de), **coin ve puan geçmişi**, **anket soruları ve
+  birimleri**, **ödül karnesi nedenleri**, **e-postalar** (şifre kodu, şifre / telefon değişti, hesap silindi) ve **SMS kodu**.
+  **Telefon / tarayıcı bildirimi** cihazın diline göre gider (`app/pushes.py`; dil değişince uygulama cihazı yeniden kaydeder).
+  Türkçe KALANLAR (bilerek): alıcıya giden SMS / e-posta / sayfa, yönetim sayfası, yönetimin elle yazdığı neden ve notlar, kişilerin
+  yazdığı içerik. Yeni deneme `tests/test_i18n_en.py`: kaynaktaki her Türkçe kullanıcı metninin İngilizcesi var mı (bilerek Türkçe
+  kalanlar `tests/i18n_tr_only.json`'da tek tek).
+- **`app/main.py`** (sürüm 1.30.0; dil ara katmanı, hata metni İngilizce), **`app/account.py`**, **`app/points.py`**, **`app/security.py`**,
+  **`app/standing.py`**, **`app/surveys.py`**, **`app/tasks.py`**, **`app/models.py`**, **`app/migrate.py`**, **`app/pushes.py`**,
+  **`app/webapp/`** (web ikizi 0.36.0: bütün ekranlar İngilizce).
+- **Dilim 39'dan:** `app/reports.py` (içerik şikâyeti: tabela, ilan, işletme kartı), `app/bizcard.py`, `app/static/yonetim.js`.
+- **Dilim 38'den:** `app/blocks.py` (YENİ), `app/admin.py`, `app/backup.py`, `app/backup_core.py`, `app/events.py`, `app/follow.py`,
+  `app/iap.py`, `app/nearby.py`, `app/relay.py`, `app/static/yonetim.css`, `.github/workflows/yedek.yml`.
+
+**Yapılacak (GitHub `Burcuri/rota-api`):**
+1. `app` klasörüne gir → `webapp` klasörünü sil (⋯ → *Delete directory*) → Commit.
+2. Yine `app` klasöründeyken **Add file → Upload files** → zip'teki `app/webapp` ve `app/static` **klasörlerini** sürükle → Commit.
+   (79 dosya; bir seferde en çok 100 dosya yüklenebildiği için .py dosyaları ayrı adımda.)
+3. Yine `app` klasöründe **Upload files** → zip'teki şu **23 dosyayı** birlikte sürükle: `account.py`, `admin.py`, `backup.py`,
+   `backup_core.py`, `bizcard.py`, `blocks.py`, `events.py`, `follow.py`, `i18n.py`, `i18n_en.py`, `iap.py`, `main.py`, `migrate.py`,
+   `models.py`, `nearby.py`, `points.py`, `pushes.py`, `relay.py`, `reports.py`, `security.py`, `standing.py`, `surveys.py`, `tasks.py` → Commit.
+4. `tests` klasörüne gir → **Upload files** → zip'teki `tests/i18n_tr_only.json`, `tests/test_backup.py`, `tests/test_content_reports.py`,
+   `tests/test_i18n_en.py`, `tests/test_iap_refunds.py`, `tests/test_reports.py` → Commit.
+5. Ana klasöre dön → **Upload files** → zip'teki `GUNCELLEME_ADIMLARI.md` → Commit. `.github` → `workflows` klasörüne gir → **Upload files** →
+   zip'teki `.github/workflows/yedek.yml` → Commit (Dilim 38'de yaptıysan atla).
+6. Render › **Manual Deploy → Deploy latest commit** → **Live**. Deneme: `https://rota-sunucu.onrender.com/openapi.json` → en başta
+   `"version":"1.30.0"`. Uygulamada Hesabım › Profil · Dil → English: yanlış şifreyle giriş "Wrong phone / username or password" der.
+   "Deploy failed" olursa: Render › **Logs** → kırmızı satırların sonuncusunda geçen `app/….py` dosyasını yeniden yükle.
+
+---
+
 # Sunucu güncellemesi — Dilim 39 · İÇERİK ŞİKÂYETİ (harita tabelası, iş ilanı, işletme kartı) + Dilim 38'in eksik dosyaları (9 Kasım 2026) — sunucu 1.29.0
 
 **Render'daki "Deploy failed" (`app/main.py`, 50. satır `from .reports import …`) bununla düzelir.** GitHub'a Dilim 38'in bazı dosyaları

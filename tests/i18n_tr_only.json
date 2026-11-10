@@ -1,0 +1,115 @@
+{
+ "account.py": [
+  "Reklamın"
+ ],
+ "doors.py": [
+  "ilce_yok",
+  "ilçe",
+  "kapı",
+  "mahalle_yok",
+  "sokak_yok"
+ ],
+ "handoff.py": [
+  "Kargonuz yolda. Süreci bağlantıdan takip edin; teslim almadan önce \"Paketimi aldım\" kutusunu işaretleyin: {link}",
+  "Kuryeniz kapıda",
+  "Kuryeniz konumunuzu doğrulamanızı istiyor",
+  "Kuryeniz paketinizi doğru adrese getirmek için konumunuzu doğrulamanızı istiyor. Bağlantıdan kapınızın yerini haritada işaretleyin: {link}",
+  "Kuryeniz paketinizi getiriyor. Takip için dokunun.",
+  "Merhaba,\n\nKargonuz yola çıktı.\n\nSüreci aşağıdaki bağlantıdan takip edebilirsiniz. Teslim almadan önce \"Paketimi aldım\" kutusunu işaretleyiniz; işaretlenmeden teslim edilmiş sayılmaz.\n\n{link}\n\nBu bağlantı ve girdiğiniz bilgiler en geç {hours} saat içinde silinir.",
+  "Merhaba,\n\nKuryeniz paketinizi doğru adrese getirmek için konumunuzu doğrulamanızı istiyor.\nAşağıdaki bağlantıdan kapınızın yerini haritada işaretleyin.\n\n{link}\n\nBu bağlantı ve girdiğiniz bilgiler en geç {hours} saat içinde silinir.",
+  "Merhaba,\n\nKuryeniz paketinizi getiriyor.\n\nPaketiniz teslim edilene kadar bu mesajı silmeyiniz. Teslim almadan önce bağlantıdan \"Paketimi aldım\" kutusunu işaretleyiniz; işaretlenmeden teslim edilmiş sayılmaz.\n\n{link}\n\nBu bağlantı ve girdiğiniz bilgiler en geç {hours} saat içinde silinir.",
+  "Paket teslimi: süreç takibi ve “Paketimi aldım”.",
+  "Paketiniz teslim edilene kadar bu mesajı silmeyiniz. Teslim almadan önce bağlantıdan \"Paketimi aldım\" kutusunu işaretleyiniz; işaretlenmeden teslim edilmiş sayılmaz. {link}",
+  "Paketiniz yolda: \"Paketimi aldım\" bağlantısı",
+  "Teslim almadan önce \"Paketimi aldım\" kutusunu işaretleyin."
+ ],
+ "iap.py": [
+  "Google Play bağlı değil"
+ ],
+ "main.py": [
+  "/hesap-sil",
+  "<!doctype html>\n<html lang=\"tr\">\n<head>\n<meta charset=\"utf-8\"/>\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,maximum-scale=1\"/>\n<title>Rota — Konum doğrula</title>\n<link rel=\"stylesheet\" href=\"https://unpkg.com/leaflet@1.9.4/dist/leaflet.css\"/>\n<style>\n  body{margin:0;font-family:system-ui,sans-serif;background:#070F1C;color:#EAF2FB}\n  #map{height:58vh}\n  .box{padding:16px}\n  h1{font-size:20px;margin:0 0 8px}\n  p{color:#7C93B3;font-size:14px}\n  input{width:100%;box-sizing:border-box;padding:12px;border-radius:10px;border:1px solid #234;background:#132844;color:#fff;font-size:16px}\n  button{width:100%;margin-top:10px;padding:14px;border:0;border-radius:12px;background:#00E5D4;color:#04211E;font-weight:800;font-size:16px}\n  .msg{margin-top:10px;font-weight:700}\n</style>\n</head>\n<body>\n<div id=\"map\"></div>\n<div class=\"box\">\n  <h1>Evinizin pinini doğrulayın</h1>\n  <p>Pakette yazan telefon numaranızı girin, pini kapıya kaydırın, kaydedin. Bu sayfa sadece numara ile konumu bağlar.</p>\n  <input id=\"phone\" inputmode=\"tel\" placeholder=\"05xxxxxxxxx\"/>\n  <button id=\"save\">Konumu kaydet</button>\n  <div class=\"msg\" id=\"msg\"></div>\n</div>\n<script src=\"https://unpkg.com/leaflet@1.9.4/dist/leaflet.js\"></script>\n<script>\nconst TOKEN = location.pathname.split('/').pop();\nconst start = [36.55, 32.00];\nconst map = L.map('map').setView(start, 16);\nL.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 20, attribution: '© OSM'}).addTo(map);\nconst marker = L.marker(start, {draggable: true}).addTo(map);\nif (navigator.geolocation) {\n  navigator.geolocation.getCurrentPosition((p) => {\n    const ll = [p.coords.latitude, p.coords.longitude];\n    marker.setLatLng(ll); map.setView(ll, 18);\n  });\n}\ndocument.getElementById('save').onclick = async () => {\n  const phone = document.getElementById('phone').value;\n  const ll = marker.getLatLng();\n  const msg = document.getElementById('msg');\n  msg.textContent = 'Kaydediliyor…';\n  try {\n    const r = await fetch('/v1/pin/' + TOKEN, {\n      method: 'POST',\n      headers: {'Content-Type': 'application/json'},\n      body: JSON.stringify({phone, lat: ll.lat, lon: ll.lng})\n    });\n    const j = await r.json();\n    if (!r.ok) throw new Error(j.detail || 'Hata');\n    msg.textContent = 'Kaydedildi. Kurye yeni konumu alacak.';\n  } catch (e) { msg.textContent = e.message; }\n};\n</script>\n</body>\n</html>\n",
+  "<h1>Link geçersiz</h1>",
+  "<p class=\"soon\">Destek e-postası yakında burada olacak. Şimdilik uygulamada <b>Hesabım › Yardım ve Destek</b> › “Bize yaz”ı kullan.</p>",
+  "<p class=\"soon\">The support e-mail will appear here soon. For now, use <b>Hesabım (Account) › Yardım ve Destek (Help &amp; Support)</b> › “Bize yaz” (Write to us) in the app.</p>",
+  "Teslimat işi",
+  "İlçe"
+ ],
+ "models.py": [
+  "Teslimat işi"
+ ],
+ "moderation.py": [
+  "ananı"
+ ],
+ "nearby.py": [
+  "ROTA kullanıcısı"
+ ],
+ "notify.py": [
+  "açık",
+  "İletimerkezi"
+ ],
+ "places.py": [
+  "Apartmanı",
+  "Bulvarı",
+  "Konutları",
+  "Meydanı",
+  "{name} Köyü"
+ ],
+ "points.py": [
+  " (alıcı onayı)",
+  " (kapıda konum)",
+  "). Yeni ödül de eklenemez. Durum son 90 gündeki kayıtlar düzelince kendiliğinden kalkar; yönetimle de görüşebilirsin.",
+  "Bir kurye",
+  "Kurye “{c.reward_name}” ürününü aldığını bildirdi",
+  "aynı adrese tekrar",
+  "aynı yerde toplanma",
+  "hiç alıcı onayı yok",
+  "{cap_days} gün tavan",
+  "Ödüllerin şu an katalogda gösterilmiyor ("
+ ],
+ "reports.py": [
+  "Cinsel ya da uygunsuz içerik",
+  "Diğer",
+  "Dolandırıcılık",
+  "Hakaret, küfür ya da taciz",
+  "ROTA · yeni şikâyet",
+  "Spam / reklam",
+  "Tehdit ya da şiddet",
+  "Yanıltıcı, hakaret içeren ya da uygunsuz tabela, ilan, işletme adı ve logo ROTA'da yasaktır; tekrarlanırsa hesabın kapatılır.",
+  "Yeni şikâyet: {REASON_TR.get(reason, reason)}.\nYönetim › Şikâyetler'den 24 saat içinde incele (mağaza şartı).\nMesaj içeriği ve kişiler e-postaya yazılmaz.",
+  "İlan",
+  "⚠️ Tabelan hakkında bir şikâyet aldık ve inceledik. ",
+  "⚠️ İlanın hakkında bir şikâyet aldık ve inceledik. ",
+  "⚠️ İşletme kartın (ad, tabela adı ya da logo) hakkında bir şikâyet aldık ve inceledik. "
+ ],
+ "reviews.py": [
+  "Geç kaldı",
+  "Hızlıydı",
+  "Paket sağlamdı",
+  "Sorunsuz teslim",
+  "Özensizdi"
+ ],
+ "security.py": [
+  "E-posta doğrulama",
+  "Silinen hesap ({code_of(o)}) kara listedeydi. Eski not: {m.note}",
+  "Silinmiş üye",
+  "Telefon değiştirme",
+  "Telefon doğrulama",
+  "Şifremi unuttum"
+ ],
+ "surveys.py": [
+  "Gün",
+  "Yanıt",
+  "İlçe"
+ ],
+ "tasks.py": [
+  "Adres listesi",
+  "başka bir kuryeye"
+ ],
+ "vehicle.py": [
+  "Bölge adı"
+ ],
+ "webpush.py": [
+  "mailto:bildirim@rota.invalid"
+ ]
+}
